@@ -1,0 +1,171 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+ <!ENTITY name      "filesviewer">
+ <!ENTITY author    "Lazaros Chalkidis">
+ <!ENTITY version   "2026.07.10">
+ <!ENTITY branch    "main">
+ <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-filesviewer">
+ <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
+ <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
+ <!ENTITY md5       "0030cfe121a5357967be883c44518ce3">
+ <!ENTITY launch    "Settings/FilesViewerSettings">
+]>
+
+<PLUGIN name="&name;" Title="Files Viewer" author="&author;" version="&version;"
+        pluginURL="&selfURL;" launch="&launch;"
+        icon="img/filesviewerplugin.png"
+        min="7.2.0"
+        support="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues">
+
+<DESCRIPTION>
+<![CDATA[
+A file browser and manager. Previews files and manages daily tasks. Deletes files to a recycle bin per share.
+]]>
+</DESCRIPTION>
+
+<CHANGES>
+<![CDATA[
+# Files Viewer
+
+## Version 2026.07.10
+
+### First release
+- Tools Page: A full-page two-pane browser under Tools > Files Viewer, folders on the left and preview on the right
+- Rooted at /mnt: Every disk, pool, and share reachable in one place, and nothing above /mnt ever is
+- File Previews: Images, text and code with syntax highlighting, Markdown, audio, video, and PDF shown in place
+- Rich Formats: Word documents, spreadsheets, CSV as a table, fonts, and e-books open in the browser too
+- Archive Contents: Zip and tar archives (including tar.gz, tar.bz2, tar.xz) listed without extracting anything
+- Database Browser: SQLite databases open read-only on the server, pick a table and page through the rows 100 at a time
+- Write Operations: Create files and folders, rename, move, copy, delete, and change owner or permissions from the top bar
+- In-Place Editor: Text and config files up to 2 MB open in the preview pane and save straight back
+- Upload and Download: Send files to the current folder with mid-transfer cancel, and pull any file back out
+- Background Jobs: Long copies, moves, and deletes run in a worker with live progress and a cancel button
+- Recycle Bin: Deletes made in Files Viewer move to a per-share bin, with restore, purge, and daily auto-empty (30 or 60 days, or never)
+- Bin Off the Network: Samba vetoes the bin folder on every share and it stays root-only on disk, which covers NFS as well
+- Space Analysis: Ranks everything inside a folder by the space it actually takes, with progress while it counts and drill-in
+- Audit Log: Every write lands in /var/log/filesviewer.log with the time, the action, and the paths involved
+- Disk Friendly: Browsing reads directory entries and metadata only and never wakes a sleeping disk, opening a file wakes just the disk that holds it
+- Quick Navigation: Breadcrumb path, type-to-filter, arrow keys and Enter, and it remembers the folder you were last in
+- Header Button: Stacked-pages icon in the WebGUI top bar jumps straight to the tool
+- Theme-Aware: Inherits the active Unraid theme (black, white, azure, gray) without override hacks
+- Settings Page: Standalone settings at Settings > Files Viewer with browser-native form submission
+]]>
+</CHANGES>
+
+<FILE Name="/boot/config/plugins/&name;/&name;-&version;.txz" Run="upgradepkg --install-new">
+  <URL>&pluginURL;</URL>
+  <MD5>&md5;</MD5>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+if [[ -f /boot/config/plugins/&name;/&name;.cfg ]]; then cp /boot/config/plugins/&name;/&name;.cfg /boot/config/plugins/&name;/&name;.cfg.bak; fi
+</INLINE>
+</FILE>
+
+<FILE Name="/boot/config/plugins/&name;/&name;.cfg" Mode="0644">
+  <INLINE>
+FV_SHOW_HIDDEN="0"
+FV_FOLDERS_FIRST="1"
+FV_REMEMBER="1"
+FV_SORT="name"
+FV_SORT_DIR="asc"
+FV_TEXT_CAP_KB="2048"
+FV_MD_RENDER="1"
+FV_IMG_MAX_MB="50"
+FV_ARCHIVE_MAX="1000"
+FV_AUTOPLAY="0"
+FV_RECYCLE="1"
+FV_RECYCLE_DAYS="30"
+  </INLINE>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+# Fix ownership and permissions
+chown -R root:root /usr/local/emhttp/plugins/&name;
+find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
+find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
+find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
+
+# filesviewer.cfg lives at /boot/config/plugins/&name;/&name;.cfg and holds user
+# preferences only (no credentials), so 0644 is the correct mode. The edge defence
+# is the CSRF token on the network side and root-only write on /boot/config on the
+# OS side, so world-readable here is acceptable.
+if [[ -f /boot/config/plugins/&name;/&name;.cfg ]]; then
+    chmod 644 /boot/config/plugins/&name;/&name;.cfg
+fi
+
+# Reset PHP opcache so the upgraded PHP files are picked up immediately instead of
+# being served from the previous compiled bytecode.
+php -r "if (function_exists(\"opcache_reset\")) opcache_reset();" >/dev/null 2>/dev/null
+
+# Merge existing user config with new defaults. New keys stay at default, existing
+# keys keep their saved values. Done via an external script to keep special
+# characters out of the PLG XML body.
+CFG=/boot/config/plugins/&name;/&name;.cfg
+BAK=/boot/config/plugins/&name;/&name;.cfg.bak
+if [[ -f "$BAK" ]]; then
+    /usr/local/emhttp/plugins/&name;/scripts/merge_cfg.sh "$CFG" "$BAK"
+    rm -f "$BAK"
+fi
+
+# The bin is for this UI only: a managed block in smb-extra.conf vetoes the
+# folder on every share. Prepended, because the file is included inside [global]
+# and lines after a user [section] would stop being global.
+SMBX=/boot/config/smb-extra.conf
+if ! grep -q "FILESVIEWER RECYCLE BEGIN" "$SMBX" 2>/dev/null; then
+    TMPX=$(mktemp)
+    echo "# FILESVIEWER RECYCLE BEGIN - managed by the files viewer plugin, do not edit" > "$TMPX"
+    echo "veto files = /.RecycleBin/" >> "$TMPX"
+    echo "# FILESVIEWER RECYCLE END" >> "$TMPX"
+    if [[ -f "$SMBX" ]]; then cat "$SMBX" >> "$TMPX"; fi
+    mv "$TMPX" "$SMBX"
+    smbcontrol all reload-config >/dev/null 2>/dev/null
+fi
+
+# Bins made by older builds inherited the share owner; close them to root so
+# SMB and NFS clients cannot enter them even where the veto is overridden.
+for FVB in /mnt/*/*/.RecycleBin ; do
+    if [[ -d "$FVB" ]]; then chown root:root "$FVB" ; chmod 700 "$FVB" ; fi
+done
+
+echo ""
+echo "----------------------------------------------------"
+echo " &name; (&branch; build) installed successfully."
+echo " Version : &version;"
+echo " Open    : Tools > Files Viewer"
+echo " Settings: Settings > Files Viewer"
+echo "----------------------------------------------------"
+echo ""
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+# With the bin enabled an uninstall also empties every bin, nothing hides on
+# the shares. A missing key means the default, on. Runs before the config rm.
+FVCFG=/boot/config/plugins/&name;/&name;.cfg
+FVPURGE=1
+if grep -q ^FV_RECYCLE=.0 "$FVCFG" 2>/dev/null; then FVPURGE=0; fi
+if [[ "$FVPURGE" == "1" ]]; then
+    rm -rf /mnt/*/*/.RecycleBin
+fi
+
+# Drop the managed Samba block and let Samba reread its config.
+sed -i "/FILESVIEWER RECYCLE BEGIN/,/FILESVIEWER RECYCLE END/d" /boot/config/smb-extra.conf 2>/dev/null
+smbcontrol all reload-config >/dev/null 2>/dev/null
+
+removepkg &name;-&version;
+rm -rf /usr/local/emhttp/plugins/&name;
+rm -rf /boot/config/plugins/&name;
+
+echo ""
+echo "----------------------------------------------------"
+echo " &name; has been removed."
+echo "----------------------------------------------------"
+echo ""
+</INLINE>
+</FILE>
+
+</PLUGIN>

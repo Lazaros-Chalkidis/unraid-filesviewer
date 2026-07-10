@@ -1,0 +1,179 @@
+Menu="SystemInformation"
+Name="Files Viewer"
+Icon="img/filesviewer.png"
+Type="xmenu"
+Tabs="false"
+Title="Files Viewer"
+---
+<?php
+/* ============================================================================
+   FILES VIEWER
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
+   ========================================================================= */
+
+require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
+require_once '/usr/local/emhttp/plugins/filesviewer/include/filesviewer_api.php';
+
+$cfg = @parse_plugin_cfg('filesviewer', true) ?: [];
+
+$dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
+$unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
+// the tool only needs light vs dark, not a per-theme palette
+$fv_theme   = in_array($unraid_theme, ['black','white','azure','gray'], true) ? $unraid_theme : 'black';
+$fv_light   = in_array($fv_theme, ['white','azure'], true);
+$themeClass = ' fv-theme-' . $fv_theme;
+$lightClass = $fv_light ? ' fv-light' : '';
+
+$var = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
+
+$fvCfg = FilesViewerEndpoint::config();
+$tool_config = [
+    'fvToken'    => FilesViewerEndpoint::generateNonce(),
+    'csrfToken'  => (string)($var['csrf_token'] ?? ''),
+    'lightTheme' => $fv_light,
+    'imgMaxMb'   => $fvCfg['img_max_mb'],
+    'autoplay'   => $fvCfg['autoplay'],
+    'remember'   => $fvCfg['remember'],
+    'recycle'    => $fvCfg['recycle'],
+    'permsFormat'=> $fvCfg['perms_format'],
+    'roots'      => $fvCfg['roots'],
+];
+$tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
+?>
+
+<link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/tool.css">
+<script>window.filesviewerToolConfig = <?= $tool_config_json ?>;</script>
+
+<div class="fv-wrapper<?= $themeClass . $lightClass ?>">
+
+  <div class="fv-panel">
+
+    <div class="fv-header">
+      <div class="fv-header__left">
+        <img src="/plugins/filesviewer/img/filesviewer.png" class="fv-header__icon" alt="">
+        <div>
+          <h2 class="fv-header__title">Files Viewer</h2>
+          <span class="fv-header__sub">
+            <span id="fv-browser-title">Contents</span>
+            <span class="fv-browser__count" id="fv-browser-count"></span>
+          </span>
+        </div>
+      </div>
+      <div class="fv-header__right">
+        <div class="fv-header__icons">
+          <a href="#" id="fv-mode" title="Preview only - click to allow editing" aria-label="Toggle editing"><i class="fa fa-fw fa-eye" aria-hidden="true"></i></a>
+          <a href="/Settings/FilesViewerSettings" title="Settings" aria-label="Settings"><i class="fa fa-fw fa-cog" aria-hidden="true"></i></a>
+        </div>
+      </div>
+    </div>
+
+    <div class="fv-pathbar">
+      <div class="fv-fileops" role="group" aria-label="File actions">
+        <button type="button" class="fv-opbtn fv-opbtn--create"   id="fv-op-create"   title="Create"><i class="fa fa-plus" aria-hidden="true"></i><span>Create</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--rename"   id="fv-op-rename"   title="Rename"><i class="fa fa-pencil" aria-hidden="true"></i><span>Rename</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--edit"     id="fv-op-edit"     title="Edit"><i class="fa fa-pencil-square-o" aria-hidden="true"></i><span>Edit</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--move"     id="fv-op-move"     title="Move"><i class="fa fa-arrows" aria-hidden="true"></i><span>Move</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--copy"     id="fv-op-copy"     title="Copy"><i class="fa fa-clone" aria-hidden="true"></i><span>Copy</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--owner"    id="fv-op-owner"    title="Change owner"><i class="fa fa-user-o" aria-hidden="true"></i><span>Owner</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--perm"     id="fv-op-perm"     title="Change permissions"><i class="fa fa-lock" aria-hidden="true"></i><span>Permission</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--upload"   id="fv-op-upload"   title="Upload"><i class="fa fa-upload" aria-hidden="true"></i><span>Upload</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--download" id="fv-op-download" title="Download the selected file" disabled><i class="fa fa-download" aria-hidden="true"></i><span>Download</span></button>
+        <button type="button" class="fv-opbtn" id="fv-op-space" title="Analyse folder space" disabled><i class="fa fa-pie-chart" aria-hidden="true"></i><span>Space</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--danger"   id="fv-op-delete"   title="Delete"><i class="fa fa-trash-o" aria-hidden="true"></i><span>Delete</span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--recycle"  id="fv-op-recycle"  title="Recycle Bin"><i class="fa fa-recycle" aria-hidden="true"></i><span>Recycle Bin</span></button>
+      </div>
+    </div>
+
+    <div class="fv-grid">
+
+      <div class="fv-browser">
+        <div class="fv-filter">
+          <input type="text" id="fv-filter-input" class="fv-filter__input" placeholder="Filter this folder" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="fv-list" id="fv-list" role="list"></div>
+      </div>
+
+      <div class="fv-preview">
+        <div class="fv-preview__head">
+          <nav class="fv-crumbs" id="fv-pv-crumbs" aria-label="Path"></nav>
+          <div class="fv-preview__tools" id="fv-pv-tools"></div>
+          <div class="fv-pv-actions" id="fv-pv-actions">
+            <button type="button" class="fv-opbtn" id="fv-op-wrap" title="Toggle line wrapping" disabled><i class="fa fa-align-left" aria-hidden="true"></i><span>Wrap</span></button>
+            <button type="button" class="fv-opbtn" id="fv-op-openraw" title="Open the file in a new tab" disabled><i class="fa fa-external-link" aria-hidden="true"></i><span>Open raw</span></button>
+            <button type="button" class="fv-pv-close" id="fv-pv-close" title="Close preview" aria-label="Close preview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+          </div>
+        </div>
+        <div class="fv-preview__bodywrap">
+          <div class="fv-preview__body" id="fv-pv-body">
+            <div class="fv-empty">
+              <div class="fv-empty__icon"><i class="fa fa-folder-open-o" aria-hidden="true"></i></div>
+              <p>Select a file to see its details.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+</div>
+
+<script defer src="/plugins/filesviewer/js/vendor/highlight.min.js"></script>
+<script defer src="/plugins/filesviewer/js/vendor/marked.umd.js"></script>
+<script defer src="/plugins/filesviewer/js/vendor/purify.min.js"></script>
+<script defer src="/plugins/filesviewer/js/filesviewer-tool.js"></script>
+
+<script>
+// the Tools shell caps page width and height. drop the width cap on our
+// ancestors, then size the panel to the space left below its top edge so only
+// the panes scroll and the page stays put. recomputed on resize.
+(function () {
+    'use strict';
+
+    function unlockAncestors() {
+        var wrap = document.querySelector('.fv-wrapper');
+        if (!wrap) return;
+        var vw = window.innerWidth || document.documentElement.clientWidth;
+        var el = wrap.parentElement;
+        while (el && el !== document.documentElement) {
+            var mw = parseFloat(window.getComputedStyle(el).maxWidth);
+            if (!isNaN(mw) && mw > 0 && mw < vw) el.style.setProperty('max-width', 'none', 'important');
+            el = el.parentElement;
+        }
+    }
+
+    function fitHeight() {
+        var panel = document.querySelector('.fv-wrapper > .fv-panel');
+        if (!panel) return;
+        if (window.innerWidth <= 820) { panel.style.height = ''; return; }   // narrow: let it flow
+
+        var vh = document.documentElement.clientHeight || window.innerHeight;
+        var rect = panel.getBoundingClientRect();
+        var absTop = rect.top + window.pageYOffset;   // distance from doc top, immune to current scroll
+        var h = vh - absTop - 28;
+        if (h < 360) h = 360;
+        panel.style.height = h + 'px';
+
+        // if a footer below still pushes the page past the viewport, trim by the overflow
+        var contentH = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
+        var over = contentH - vh;
+        if (over > 1) {
+            h -= over + 2;
+            panel.style.height = (h < 360 ? 360 : h) + 'px';
+        }
+    }
+
+    function apply() { unlockAncestors(); fitHeight(); }
+
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
+    else apply();
+    window.addEventListener('load', apply);
+    window.addEventListener('resize', apply);
+    // unraid keeps painting after load, so re-measure a few times to settle
+    setTimeout(apply, 100);
+    setTimeout(apply, 400);
+    setTimeout(apply, 800);
+})();
+</script>

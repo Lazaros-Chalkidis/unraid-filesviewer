@@ -1,0 +1,5 @@
+Menu="Buttons:0"
+Title="Files Viewer"
+Icon="img/files.svg"
+---
+<script src="/plugins/filesviewer/js/filesviewer-header.js"></script>

@@ -1,0 +1,524 @@
+Menu="Utilities"
+Icon="img/filesviewer.png"
+Title="Files Viewer Settings"
+---
+<?php
+/* ============================================================================
+   FILES VIEWER
+   Copyright (C) 2026 Lazaros Chalkidis
+   License: GPLv3
+   ========================================================================= */
+
+require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
+
+const FV_PLUGIN   = 'filesviewer';
+const FV_CFG_FILE = '/boot/config/plugins/filesviewer/filesviewer.cfg';
+
+// form sanitizers, every posted value gets clamped through one of these
+$yn = static fn($v, $d = '0') => ((string)($v ?? $d) === '1') ? '1' : '0';
+
+$one_of = static function($v, array $allowed, string $default): string {
+    $v = strtolower((string)$v);
+    return in_array($v, $allowed, true) ? $v : $default;
+};
+
+// settings apply: rebuild the cfg from the posted fields, then write it back
+if (isset($_POST['#apply'])) {
+
+    $new_cfg = @parse_ini_file(FV_CFG_FILE) ?: [];
+
+    $new_cfg['FV_SHOW_HIDDEN']   = $yn($_POST['FV_SHOW_HIDDEN']   ?? '0', '0');
+    $new_cfg['FV_FOLDERS_FIRST'] = $yn($_POST['FV_FOLDERS_FIRST'] ?? '1', '1');
+    $new_cfg['FV_REMEMBER']      = $yn($_POST['FV_REMEMBER'] ?? '1', '1');
+    $new_cfg['FV_SORT']          = $one_of($_POST['FV_SORT']     ?? 'name', ['name','size','modified'], 'name');
+    $new_cfg['FV_SORT_DIR']      = $one_of($_POST['FV_SORT_DIR'] ?? 'asc',  ['asc','desc'], 'asc');
+    $new_cfg['FV_PERMS_FORMAT']  = $one_of($_POST['FV_PERMS_FORMAT'] ?? 'octal', ['octal','symbolic'], 'octal');
+    $new_cfg['FV_TEXT_CAP_KB']   = $one_of($_POST['FV_TEXT_CAP_KB'] ?? '2048', ['256','512','1024','2048','5120','10240'], '2048');
+    $new_cfg['FV_MD_RENDER']     = $yn($_POST['FV_MD_RENDER'] ?? '1', '1');
+    $new_cfg['FV_IMG_MAX_MB']    = $one_of($_POST['FV_IMG_MAX_MB'] ?? '50', ['10','25','50','100','250'], '50');
+    $new_cfg['FV_ARCHIVE_MAX']   = $one_of($_POST['FV_ARCHIVE_MAX'] ?? '1000', ['200','500','1000','2500','5000'], '1000');
+    $new_cfg['FV_AUTOPLAY']      = $yn($_POST['FV_AUTOPLAY'] ?? '0', '0');
+    $new_cfg['FV_RECYCLE']       = $yn($_POST['FV_RECYCLE'] ?? '1', '1');
+    $new_cfg['FV_RECYCLE_DAYS']  = $one_of($_POST['FV_RECYCLE_DAYS'] ?? '30', ['30','60','never'], '30');
+
+    $ini = '';
+    foreach ($new_cfg as $k => $v) {
+        $v = preg_replace('/[\x00-\x1f\x7f]/', '', (string)$v);  // strip control chars
+        $v = str_replace('"', '\\"', $v);                        // escape quotes so the ini cannot be broken out of
+        $ini .= "{$k}=\"{$v}\"\n";
+    }
+    @mkdir(dirname(FV_CFG_FILE), 0755, true);
+    file_put_contents(FV_CFG_FILE, $ini);
+
+    $cfg = $new_cfg;
+} else {
+    $cfg = @parse_ini_file(FV_CFG_FILE) ?: [];
+}
+
+$def = [
+    'FV_SHOW_HIDDEN'   => '0',
+    'FV_FOLDERS_FIRST' => '1',
+    'FV_REMEMBER'      => '1',
+    'FV_SORT'          => 'name',
+    'FV_SORT_DIR'      => 'asc',
+    'FV_PERMS_FORMAT'  => 'octal',
+    'FV_TEXT_CAP_KB'   => '2048',
+    'FV_MD_RENDER'     => '1',
+    'FV_IMG_MAX_MB'    => '50',
+    'FV_ARCHIVE_MAX'   => '1000',
+    'FV_AUTOPLAY'      => '0',
+    'FV_RECYCLE'       => '1',
+    'FV_RECYCLE_DAYS'  => '30',
+];
+$cfg += $def;
+
+$dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
+$unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
+$fv_theme     = in_array($unraid_theme, ['black','white','azure','gray'], true) ? $unraid_theme : 'black';
+$fv_light     = in_array($fv_theme, ['white','azure'], true);
+$themeClass   = ' fv-theme-' . $fv_theme;
+$lightClass   = $fv_light ? ' fv-light' : '';
+$rootClasses  = $themeClass . $lightClass;
+
+// show the running build, falling back to the .plg metadata and then a label
+$plugin_version = '';
+$_pvFile = '/usr/local/emhttp/plugins/filesviewer/VERSION';
+if (is_readable($_pvFile)) {
+    $_pvRead = trim((string)@file_get_contents($_pvFile));
+    if ($_pvRead !== '') $plugin_version = $_pvRead;
+}
+if ($plugin_version === '') {
+    $plg = @file_get_contents('/boot/config/plugins/filesviewer/filesviewer.plg');
+    if ($plg && preg_match('/<!ENTITY\s+version\s+"([^"]+)"/i', $plg, $m)) {
+        $plugin_version = $m[1];
+    }
+}
+if ($plugin_version === '') $plugin_version = 'dev';
+
+$sel = static fn($a, $b) => ($a === $b) ? ' selected' : '';
+?>
+
+<link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/settings.css">
+
+<form name="filesviewer_settings" method="post" class="filesviewer-settings<?= $rootClasses ?>" autocomplete="off">
+
+<?php
+$toggle = function($name, $val, $default = '1', $onLabel = 'Enabled', $offLabel = 'Disabled') {
+    $isOn = ((string)($val ?? $default)) === '1';
+    return '<input type="hidden" name="' . $name . '" value="' . ($isOn ? '1' : '0') . '">'
+        . '<label class="fv-toggle"><input type="checkbox" data-fv-toggle="' . $name . '"' . ($isOn ? ' checked' : '') . '>'
+        . '<span class="fv-toggle-track"></span></label>'
+        . '<span class="fv-toggle-txt ' . ($isOn ? 'on' : 'off') . '"'
+        . ' data-on="'  . htmlspecialchars($onLabel,  ENT_QUOTES) . '"'
+        . ' data-off="' . htmlspecialchars($offLabel, ENT_QUOTES) . '">'
+        . ($isOn ? $onLabel : $offLabel) . '</span>';
+};
+$toggleShow = function($name, $val, $default = '1') use ($toggle) {
+    return $toggle($name, $val, $default, 'Show', 'Hide');
+};
+?>
+
+<div class="fv-settings-panel">
+
+  <div class="fv-sec" id="fvSecBrowsing">
+    <div class="fv-sec-hd">
+      <span>Browsing</span>
+      <span class="fv-pill">Where Files Viewer can look</span>
+      <span class="fv-sec-arrow">&#9650;</span>
+    </div>
+    <div class="fv-sec-bd">
+
+      <div class="fv-r">
+        <div class="fv-r-label">Show hidden files</div>
+        <div class="fv-r-field">
+          <?= $toggleShow('FV_SHOW_HIDDEN', $cfg['FV_SHOW_HIDDEN'], '0') ?>
+          <span class="fv-r-desc">Include dotfiles and dot-folders in the listing</span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Folders first</div>
+        <div class="fv-r-field">
+          <?= $toggle('FV_FOLDERS_FIRST', $cfg['FV_FOLDERS_FIRST'], '1', 'On', 'Off') ?>
+          <span class="fv-r-desc">List folders above files regardless of sort order</span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Remember last folder</div>
+        <div class="fv-r-field">
+          <?= $toggle('FV_REMEMBER', $cfg['FV_REMEMBER'], '1', 'On', 'Off') ?>
+          <span class="fv-r-desc">Reopen the tool at the folder you were last browsing</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="fv-sec closed" id="fvSecSorting">
+    <div class="fv-sec-hd">
+      <span>Sorting</span>
+      <span class="fv-pill">Default order of the listing</span>
+      <span class="fv-sec-arrow">&#9650;</span>
+    </div>
+    <div class="fv-sec-bd">
+
+      <div class="fv-r">
+        <div class="fv-r-label">Sort by</div>
+        <div class="fv-r-field">
+          <select name="FV_SORT" class="fv-select">
+            <option value="name"<?= $sel($cfg['FV_SORT'], 'name') ?>>Name - Default</option>
+            <option value="size"<?= $sel($cfg['FV_SORT'], 'size') ?>>Size</option>
+            <option value="modified"<?= $sel($cfg['FV_SORT'], 'modified') ?>>Modified</option>
+          </select>
+          <span class="fv-r-desc">Which field decides the order of entries</span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Direction</div>
+        <div class="fv-r-field">
+          <select name="FV_SORT_DIR" class="fv-select">
+            <option value="asc"<?= $sel($cfg['FV_SORT_DIR'], 'asc') ?>>Ascending - Default</option>
+            <option value="desc"<?= $sel($cfg['FV_SORT_DIR'], 'desc') ?>>Descending</option>
+          </select>
+          <span class="fv-r-desc">Ascending or descending order</span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Permissions format</div>
+        <div class="fv-r-field">
+          <select name="FV_PERMS_FORMAT" class="fv-select">
+            <option value="octal"<?= $sel($cfg['FV_PERMS_FORMAT'], 'octal') ?>>Octal - 750</option>
+            <option value="symbolic"<?= $sel($cfg['FV_PERMS_FORMAT'], 'symbolic') ?>>Symbolic - drwxr-xr-x</option>
+          </select>
+          <span class="fv-r-desc">How permissions are shown in the listing and the file card</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="fv-sec closed" id="fvSecPreview">
+    <div class="fv-sec-hd">
+      <span>Preview</span>
+      <span class="fv-pill">Inline preview limits</span>
+      <span class="fv-sec-arrow">&#9650;</span>
+    </div>
+    <div class="fv-sec-bd">
+
+      <div class="fv-r">
+        <div class="fv-r-label">Render markdown</div>
+        <div class="fv-r-field">
+          <?= $toggle('FV_MD_RENDER', $cfg['FV_MD_RENDER'], '1', 'Rendered', 'Source') ?>
+          <span class="fv-r-desc">Show .md files formatted. Off shows the raw source with highlighting</span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Text preview limit</div>
+        <div class="fv-r-field">
+          <?php $capLabels = ['256'=>'256 KB','512'=>'512 KB','1024'=>'1 MB','2048'=>'2 MB - Default','5120'=>'5 MB','10240'=>'10 MB']; ?>
+          <select name="FV_TEXT_CAP_KB" class="fv-select">
+            <?php foreach ($capLabels as $kb => $lbl): ?>
+              <option value="<?= $kb ?>"<?= $sel((string)$cfg['FV_TEXT_CAP_KB'], $kb) ?>><?= $lbl ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="fv-r-desc">How much of a text or code file to load. Larger files show the first part only</span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Inline image limit</div>
+        <div class="fv-r-field">
+          <?php $imgLabels = ['10'=>'10 MB','25'=>'25 MB','50'=>'50 MB - Default','100'=>'100 MB','250'=>'250 MB']; ?>
+          <select name="FV_IMG_MAX_MB" class="fv-select">
+            <?php foreach ($imgLabels as $mb => $lbl): ?>
+              <option value="<?= $mb ?>"<?= $sel((string)$cfg['FV_IMG_MAX_MB'], $mb) ?>><?= $lbl ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="fv-r-desc">Images larger than this show their details instead of loading inline</span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Archive listing limit</div>
+        <div class="fv-r-field">
+          <?php $archLabels = ['200'=>'200 entries','500'=>'500 entries','1000'=>'1000 entries - Default','2500'=>'2500 entries','5000'=>'5000 entries']; ?>
+          <select name="FV_ARCHIVE_MAX" class="fv-select">
+            <?php foreach ($archLabels as $n => $lbl): ?>
+              <option value="<?= $n ?>"<?= $sel((string)$cfg['FV_ARCHIVE_MAX'], $n) ?>><?= $lbl ?></option>
+            <?php endforeach; ?>
+          </select>
+          <span class="fv-r-desc">Maximum number of entries listed inside an archive</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="fv-sec closed" id="fvSecMedia">
+    <div class="fv-sec-hd">
+      <span>Media</span>
+      <span class="fv-pill">Playback</span>
+      <span class="fv-sec-arrow">&#9650;</span>
+    </div>
+    <div class="fv-sec-bd">
+
+      <div class="fv-r">
+        <div class="fv-r-label">Autoplay media</div>
+        <div class="fv-r-field">
+          <?= $toggle('FV_AUTOPLAY', $cfg['FV_AUTOPLAY'], '0', 'On', 'Off') ?>
+          <span class="fv-r-desc">Start audio and video automatically when opened. Off is recommended</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="fv-sec closed" id="fvSecRecycle">
+    <div class="fv-sec-hd">
+      <span>Recycle bin</span>
+      <span class="fv-pill">Safety net for deletes</span>
+      <span class="fv-sec-arrow">&#9650;</span>
+    </div>
+    <div class="fv-sec-bd">
+
+      <div class="fv-r">
+        <div class="fv-r-label">Recycle bin</div>
+        <div class="fv-r-field">
+          <?= $toggle('FV_RECYCLE', $cfg['FV_RECYCLE'], '1', 'On', 'Off') ?>
+          <span class="fv-r-desccol">
+            <span class="fv-r-desc fv-r-desc--warn">Deletes made in Files Viewer move to a per share recycle bin. Deletions over SMB or by other tools are not covered. Off deletes permanently</span>
+            <span class="fv-r-danger">Uninstalling the plugin while the recycle bin is enabled permanently deletes every file the bin holds</span>
+          </span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label">Auto empty</div>
+        <div class="fv-r-field">
+          <select name="FV_RECYCLE_DAYS" class="fv-select">
+            <option value="30"<?= $sel($cfg['FV_RECYCLE_DAYS'], '30') ?>>After 30 days - Default</option>
+            <option value="60"<?= $sel($cfg['FV_RECYCLE_DAYS'], '60') ?>>After 60 days</option>
+            <option value="never"<?= $sel($cfg['FV_RECYCLE_DAYS'], 'never') ?>>Never</option>
+          </select>
+          <span class="fv-r-desc">Items older than this are removed from the recycle bin automatically. Never keeps them until you empty the bin yourself</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="fv-actions-bar">
+    <button type="submit" name="#apply" value="apply" id="fvApplyBtn" class="fv-action-btn fv-action-btn--apply" title="Save settings">
+      <i class="fa fa-check" aria-hidden="true"></i> Apply
+    </button>
+    <button type="button" id="fvResetBtn" class="fv-action-btn fv-action-btn--reset" title="Reset to defaults">
+      <i class="fa fa-undo" aria-hidden="true"></i> Reset to Defaults
+    </button>
+    <button type="button" class="fv-action-btn fv-action-btn--done" onclick="done()" title="Return to the previous page">
+      <i class="fa fa-arrow-left" aria-hidden="true"></i> Done
+    </button>
+  </div>
+
+</div>
+
+<div class="fv-footer-row">
+  <div class="fv-footer-links">
+    <a href="https://forums.unraid.net/topic/198667-plugin-files-viewer/"
+       class="fv-footer-link"
+       target="_blank" rel="noopener">Support Forum</a>
+    <span class="fv-footer-sep" aria-hidden="true"></span>
+    <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues"
+       class="fv-footer-link"
+       target="_blank" rel="noopener">GitHub Issues</a>
+    <span class="fv-footer-sep" aria-hidden="true"></span>
+    <a href="#" id="fvCreditsLink" class="fv-footer-link">Credits</a>
+  </div>
+  <span class="fv-version-badge">v<?= htmlspecialchars((string)$plugin_version) ?></span>
+</div>
+
+<div id="fvCreditsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
+  <div class="fv-credits-modal-box fv-credits-modal-v2">
+    <div class="fv-credits-grid">
+
+      <div class="fv-credits-left">
+        <span class="fv-credits-accent-stripe"></span>
+        <div class="fv-credits-avatar-wrap">
+          <img src="/plugins/filesviewer/img/avatar.png" alt="Lazaros Chalkidis" class="fv-credits-avatar">
+        </div>
+        <div class="fv-credits-name">Lazaros Chalkidis</div>
+        <div class="fv-credits-role">Developer</div>
+      </div>
+
+      <div class="fv-credits-right">
+        <div class="fv-credits-title-row">
+          <span class="fv-credits-title">Files Viewer</span>
+          <span class="fv-credits-version">v<?= htmlspecialchars((string)$plugin_version) ?></span>
+        </div>
+        <div class="fv-credits-desc">A read-only file browser for your Unraid shares and disks, with inline previews.</div>
+        <div class="fv-credits-links">
+          <a href="https://github.com/Lazaros-Chalkidis" target="_blank" rel="noopener" class="fv-credits-link">
+            <i class="fa fa-github"></i><span>GitHub Profile</span><i class="fa fa-external-link fv-credits-link-ext"></i>
+          </a>
+          <a href="https://forums.unraid.net/topic/198667-plugin-files-viewer/" target="_blank" rel="noopener" class="fv-credits-link">
+            <i class="fa fa-comments-o"></i><span>Plugin Support Thread</span><i class="fa fa-external-link fv-credits-link-ext"></i>
+          </a>
+          <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues" target="_blank" rel="noopener" class="fv-credits-link">
+            <i class="fa fa-exclamation-circle"></i><span>GitHub Issues</span><i class="fa fa-external-link fv-credits-link-ext"></i>
+          </a>
+        </div>
+      </div>
+    </div>
+    <div class="fv-credits-footer">
+      <span class="fv-credits-copy">Copyright &copy; 2026 Files Viewer - Lazaros Chalkidis</span>
+      <button type="button" id="fvCreditsOkBtn" class="fv-credits-ok-btn">OK</button>
+    </div>
+  </div>
+</div>
+
+<div id="fvNoticeModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
+  <div class="fv-credits-modal-box" style="max-width:420px;">
+    <div style="padding:1.8rem 2.2rem 1.4rem;text-align:center;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
+
+      <div style="width:64px;height:64px;border-radius:50%;background:#3f8a4f;display:flex;align-items:center;justify-content:center;margin-bottom:1.1rem;box-shadow:0 4px 14px rgba(63,138,79,0.35);">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polyline points="5 12 10 17 19 8"></polyline>
+        </svg>
+      </div>
+      <div id="fvNoticeTitle" style="font-size:1.2em;font-weight:700;color:#fff;margin-bottom:0.6rem;">Notice</div>
+      <div id="fvNoticeBody" style="font-size:0.95em;line-height:1.55;opacity:0.75;"></div>
+    </div>
+    <div class="fv-credits-footer" style="justify-content:center;">
+      <button type="button" id="fvNoticeOkBtn" style="background:#f47d42;border:1px solid #f47d42;color:#fff;padding:0.5rem 2.5rem;font-size:0.9em;font-weight:600;border-radius:4px;cursor:pointer;">OK</button>
+    </div>
+  </div>
+</div>
+
+</form>
+
+<script>
+(function () {
+    'use strict';
+
+    // collapsible sections
+    document.querySelectorAll('.fv-sec-hd').forEach(function (hd) {
+        hd.addEventListener('click', function () {
+            hd.parentElement.classList.toggle('closed');
+        });
+    });
+
+    // mirror each toggle's checkbox into its hidden input and swap the label
+    document.querySelectorAll('input[data-fv-toggle]').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+            var name   = cb.getAttribute('data-fv-toggle');
+            var hidden = document.querySelector('input[type="hidden"][name="' + name + '"]');
+            if (hidden) hidden.value = cb.checked ? '1' : '0';
+            var field = cb.closest('.fv-r-field');
+            var txt   = field ? field.querySelector('.fv-toggle-txt') : null;
+            if (txt) {
+                txt.textContent = cb.checked ? (txt.getAttribute('data-on') || '') : (txt.getAttribute('data-off') || '');
+                txt.classList.toggle('on',  cb.checked);
+                txt.classList.toggle('off', !cb.checked);
+            }
+        });
+    });
+
+    // let the normal POST fire, then show the button as saving
+    var form     = document.querySelector('form[name="filesviewer_settings"]');
+    var applyBtn = document.getElementById('fvApplyBtn');
+    if (form && applyBtn) {
+        form.addEventListener('submit', function () {
+            setTimeout(function () {
+                applyBtn.disabled  = true;
+                applyBtn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> Saving\u2026';
+            }, 0);
+        });
+    }
+
+    // reset to defaults: restore the fields, then ask the user to Apply
+    var FV_DEFAULTS = {
+        FV_SHOW_HIDDEN:   '0',
+        FV_FOLDERS_FIRST: '1',
+        FV_REMEMBER:      '1',
+        FV_SORT:          'name',
+        FV_SORT_DIR:      'asc',
+        FV_PERMS_FORMAT:  'octal',
+        FV_TEXT_CAP_KB:   '2048',
+        FV_MD_RENDER:     '1',
+        FV_IMG_MAX_MB:    '50',
+        FV_ARCHIVE_MAX:   '1000',
+        FV_AUTOPLAY:      '0',
+        FV_RECYCLE:       '1',
+        FV_RECYCLE_DAYS:  '30'
+    };
+
+    function resetDefaults() {
+        if (!form) return;
+
+        Object.keys(FV_DEFAULTS).forEach(function (k) {
+            var el = form.querySelector('[name="' + k + '"]');
+            if (el && el.tagName !== 'INPUT') el.value = FV_DEFAULTS[k];   // textarea and selects
+            else if (el && el.type !== 'checkbox' && el.type !== 'hidden') el.value = FV_DEFAULTS[k];
+        });
+
+        document.querySelectorAll('.fv-toggle input[type="checkbox"]').forEach(function (cb) {
+            var name = cb.getAttribute('data-fv-toggle');
+            if (!name || !FV_DEFAULTS.hasOwnProperty(name)) return;
+            cb.checked = FV_DEFAULTS[name] === '1';
+            var hidden = document.querySelector('input[type="hidden"][name="' + name + '"]');
+            if (hidden) hidden.value = cb.checked ? '1' : '0';
+            var field = cb.closest('.fv-r-field');
+            var txt   = field ? field.querySelector('.fv-toggle-txt') : null;
+            if (txt) {
+                txt.textContent = cb.checked ? (txt.getAttribute('data-on') || '') : (txt.getAttribute('data-off') || '');
+                txt.className = 'fv-toggle-txt ' + (cb.checked ? 'on' : 'off');
+            }
+        });
+
+        fvShowNotice('Settings reset',
+            'The settings have been restored to their default values. Click '
+            + '<span style="color:#f47d42;font-weight:600;">Apply</span> to save.');
+    }
+
+    var resetBtn = document.getElementById('fvResetBtn');
+    if (resetBtn) resetBtn.addEventListener('click', resetDefaults);
+
+    // notice modal
+    function fvShowNotice(title, bodyHtml) {
+        var nModal = document.getElementById('fvNoticeModal');
+        var nTitle = document.getElementById('fvNoticeTitle');
+        var nBody  = document.getElementById('fvNoticeBody');
+        if (!nModal || !nTitle || !nBody) {
+            var plain = (bodyHtml || '').replace(/<[^>]+>/g, '');
+            alert(title + (plain ? '\n\n' + plain : ''));
+            return;
+        }
+        nTitle.textContent = title || 'Notice';
+        nBody.innerHTML    = bodyHtml || '';
+        nModal.style.display = 'flex';
+    }
+    var nModal = document.getElementById('fvNoticeModal');
+    var nOk    = document.getElementById('fvNoticeOkBtn');
+    if (nOk && nModal) nOk.addEventListener('click', function () { nModal.style.display = 'none'; });
+    if (nModal) {
+        nModal.addEventListener('click', function (e) { if (e.target === nModal) nModal.style.display = 'none'; });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape' && nModal.style.display !== 'none') nModal.style.display = 'none';
+        });
+    }
+
+    // credits modal
+    var modal = document.getElementById('fvCreditsModal');
+    var cLink = document.getElementById('fvCreditsLink');
+    var okBtn = document.getElementById('fvCreditsOkBtn');
+    if (cLink && modal) cLink.addEventListener('click', function (e) { e.preventDefault(); modal.style.display = 'flex'; });
+    if (okBtn && modal) okBtn.addEventListener('click', function () { modal.style.display = 'none'; });
+    if (modal) {
+        modal.addEventListener('click', function (e) { if (e.target === modal) modal.style.display = 'none'; });
+        document.addEventListener('keydown', function (e) { if (e.key === 'Escape') modal.style.display = 'none'; });
+    }
+})();
+</script>

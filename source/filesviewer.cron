@@ -1,0 +1,2 @@
+# Files Viewer: empty expired recycle bin events daily
+30 4 * * * /usr/bin/php /usr/local/emhttp/plugins/filesviewer/include/filesviewer_recycle_cron.php &> /dev/null

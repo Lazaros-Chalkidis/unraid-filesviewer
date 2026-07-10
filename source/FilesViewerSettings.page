@@ -327,7 +327,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
 <div class="fv-footer-row">
   <div class="fv-footer-links">
-    <a href="https://forums.unraid.net/topic/198667-plugin-files-viewer/"
+    <a href="https://forums.unraid.net/topic/199815-plugin-files-viewer/"
        class="fv-footer-link"
        target="_blank" rel="noopener">Support Forum</a>
     <span class="fv-footer-sep" aria-hidden="true"></span>
@@ -363,7 +363,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
           <a href="https://github.com/Lazaros-Chalkidis" target="_blank" rel="noopener" class="fv-credits-link">
             <i class="fa fa-github"></i><span>GitHub Profile</span><i class="fa fa-external-link fv-credits-link-ext"></i>
           </a>
-          <a href="https://forums.unraid.net/topic/198667-plugin-files-viewer/" target="_blank" rel="noopener" class="fv-credits-link">
+          <a href="https://forums.unraid.net/topic/199815-plugin-files-viewer/" target="_blank" rel="noopener" class="fv-credits-link">
             <i class="fa fa-comments-o"></i><span>Plugin Support Thread</span><i class="fa fa-external-link fv-credits-link-ext"></i>
           </a>
           <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues" target="_blank" rel="noopener" class="fv-credits-link">

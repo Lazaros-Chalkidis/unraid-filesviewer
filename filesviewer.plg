@@ -7,7 +7,7 @@
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-filesviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "0030cfe121a5357967be883c44518ce3">
+ <!ENTITY md5       "98ac99c8245902af788283cc9a0adffb">
  <!ENTITY launch    "Settings/FilesViewerSettings">
 ]>
 

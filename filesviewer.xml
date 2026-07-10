@@ -8,7 +8,7 @@
   <Name>Files Viewer</Name>
   <Description><![CDATA[A file browser and manager. Previews files and manages daily tasks. Deletes files to a recycle bin per share.]]></Description>
   <Project>https://github.com/Lazaros-Chalkidis/unraid-filesviewer</Project>
-  <Support>https://forums.unraid.net/topic/198667-plugin-files-viewer/</Support>
+  <Support>https://forums.unraid.net/topic/199815-plugin-files-viewer/</Support>
   <Icon>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/source/img/filesviewerplugin.png</Icon>
   <License>GPL v3</License>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/settings.png</Screenshot>

@@ -1,14 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
-<Container>
-  <Plugin>True</Plugin>
+<Plugin>
+  <Name>Files Viewer</Name>
+  <Overview><![CDATA[A file browser and manager for Unraid. Previews files (images, text, PDF, video, archives, SQLite and more) and manages them directly from the browser. Deleted files go to a recycle bin kept per share.]]></Overview>
   <PluginURL>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/filesviewer.plg</PluginURL>
   <PluginAuthor>Lazaros Chalkidis</PluginAuthor>
-  <Beta>false</Beta>
-  <Category>Tools:Utilities Tools:System</Category>
-  <Name>Files Viewer</Name>
-  <Description><![CDATA[A file browser and manager. Previews files and manages daily tasks. Deletes files to a recycle bin per share.]]></Description>
+  <Support>https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues</Support>
   <Project>https://github.com/Lazaros-Chalkidis/unraid-filesviewer</Project>
-  <Support>https://forums.unraid.net/topic/199815-plugin-files-viewer/</Support>
+  <ReadMe>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/README.md</ReadMe>
+  <Category>Tools:Utilities Tools:System</Category>
   <Icon>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/source/img/filesviewerplugin.png</Icon>
   <License>GPL v3</License>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/settings.png</Screenshot>
@@ -17,5 +16,5 @@
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool3.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool4.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool5.png</Screenshot>
-  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool6.png</Screenshot>  
-</Container>
+  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool6.png</Screenshot>
+</Plugin>

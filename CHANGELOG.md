@@ -1,5 +1,9 @@
 # Files Viewer
 
+## 2026.07.21
+
+Changed: support links now point to GitHub Issues, and the README wording was tightened
+
 ## Version 2026.07.10
 
 ### First release

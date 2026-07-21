@@ -327,10 +327,6 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
 <div class="fv-footer-row">
   <div class="fv-footer-links">
-    <a href="https://forums.unraid.net/topic/199815-plugin-files-viewer/"
-       class="fv-footer-link"
-       target="_blank" rel="noopener">Support Forum</a>
-    <span class="fv-footer-sep" aria-hidden="true"></span>
     <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues"
        class="fv-footer-link"
        target="_blank" rel="noopener">GitHub Issues</a>
@@ -358,13 +354,10 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
           <span class="fv-credits-title">Files Viewer</span>
           <span class="fv-credits-version">v<?= htmlspecialchars((string)$plugin_version) ?></span>
         </div>
-        <div class="fv-credits-desc">A read-only file browser for your Unraid shares and disks, with inline previews.</div>
+        <div class="fv-credits-desc">A file browser and manager for your Unraid shares and disks, with inline previews and a per-share recycle bin.</div>
         <div class="fv-credits-links">
           <a href="https://github.com/Lazaros-Chalkidis" target="_blank" rel="noopener" class="fv-credits-link">
             <i class="fa fa-github"></i><span>GitHub Profile</span><i class="fa fa-external-link fv-credits-link-ext"></i>
-          </a>
-          <a href="https://forums.unraid.net/topic/199815-plugin-files-viewer/" target="_blank" rel="noopener" class="fv-credits-link">
-            <i class="fa fa-comments-o"></i><span>Plugin Support Thread</span><i class="fa fa-external-link fv-credits-link-ext"></i>
           </a>
           <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues" target="_blank" rel="noopener" class="fv-credits-link">
             <i class="fa fa-exclamation-circle"></i><span>GitHub Issues</span><i class="fa fa-external-link fv-credits-link-ext"></i>

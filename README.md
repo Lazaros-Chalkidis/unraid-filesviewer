@@ -6,6 +6,7 @@ Browse your Unraid shares and disks from a page under Tools, preview files in pl
   <img src="https://img.shields.io/github/v/release/Lazaros-Chalkidis/unraid-filesviewer?label=Latest%20Version&color=blue" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/last-commit/Lazaros-Chalkidis/unraid-filesviewer?label=Last%20Update" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/issues/Lazaros-Chalkidis/unraid-filesviewer?label=Issues" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/downloads/Lazaros-Chalkidis/unraid-filesviewer/total?label=Downloads&color=brightgreen" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/license/Lazaros-Chalkidis/unraid-filesviewer?label=License" style="margin: 4px;" />
 </p>
 

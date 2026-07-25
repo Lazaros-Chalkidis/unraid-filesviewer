@@ -1,8 +1,15 @@
+
 # Files Viewer
 
-## 2026.07.21
+## Version 2026.07.25
 
-Changed: support links now point to GitHub Issues, and the README wording was tightened
+### Fixed
+- Plugin URL now matches the Community Applications template exactly
+
+## Version 2026.07.21
+
+### Fixed
+- Support links now point to GitHub Issues, and the README wording was tightened
 
 ## Version 2026.07.10
 

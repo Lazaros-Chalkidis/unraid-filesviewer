@@ -8,13 +8,14 @@
   <Project>https://github.com/Lazaros-Chalkidis/unraid-filesviewer</Project>
   <ReadMe>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/README.md</ReadMe>
   <Category>Tools:Utilities Tools:System</Category>
+  <MinVer>7.2.0</MinVer>
   <Icon>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/source/img/filesviewerplugin.png</Icon>
   <License>GPL v3</License>
-  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/settings.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool1.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool2.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool3.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool4.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool5.png</Screenshot>
   <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/tool6.png</Screenshot>
+  <Screenshot>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/screenshots/settings.png</Screenshot>
 </Plugin>

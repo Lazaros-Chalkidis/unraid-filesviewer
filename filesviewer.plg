@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "filesviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.07.21">
+ <!ENTITY version   "2026.07.25">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-filesviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
- <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
- <!ENTITY md5       "80f073dac92b982efaf46e726f8358f3">
+ <!ENTITY selfURL   "https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/&branch;/&name;.plg">
+ <!ENTITY md5       "d80dc1504555b14c77d43d7cad0b3152">
  <!ENTITY launch    "Settings/FilesViewerSettings">
 ]>
 
@@ -25,11 +25,18 @@ A file browser and manager. Previews files and manages daily tasks. Deletes file
 
 <CHANGES>
 <![CDATA[
+
 # Files Viewer
 
-## 2026.07.21
+## Version 2026.07.25
 
-Changed: support links now point to GitHub Issues, and the README wording was tightened
+### Fixed
+- Plugin URL now matches the Community Applications template exactly
+
+## Version 2026.07.21
+
+### Fixed
+- Support links now point to GitHub Issues, and the README wording was tightened
 
 ## Version 2026.07.10
 

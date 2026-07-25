@@ -19,6 +19,8 @@ PLUGIN_NAME="filesviewer"
 AUTHOR="Lazaros Chalkidis"
 GITHUB_USER="Lazaros-Chalkidis"
 GIT_URL="https://github.com/Lazaros-Chalkidis/unraid-filesviewer"
+# CA requires the plg pluginURL to match the template PluginURL character for character
+RAW_URL="${GIT_URL/github.com/raw.githubusercontent.com}"
 PACKAGE_DIR_FINAL="packages"
 PACKAGE_DIR_TEMP="package-temp"
 
@@ -239,7 +241,7 @@ if [[ "$LOCAL_INSTALL" == "local" ]]; then
  <!ENTITY version "${VERSION}">
  <!ENTITY branch  "${BRANCH}">
  <!ENTITY gitURL  "${GIT_URL}">
- <!ENTITY selfURL "&gitURL;/raw/&branch;/&name;.plg">
+ <!ENTITY selfURL "${RAW_URL}/&branch;/&name;.plg">
  <!ENTITY launch  "Settings/FilesViewerSettings">
 ]>
 
@@ -315,7 +317,7 @@ else
  <!ENTITY branch    "${BRANCH}">
  <!ENTITY gitURL    "${GIT_URL}">
  <!ENTITY pluginURL "${PLUGIN_URL_STRUCTURE}">
- <!ENTITY selfURL   "&gitURL;/raw/&branch;/&name;.plg">
+ <!ENTITY selfURL   "${RAW_URL}/&branch;/&name;.plg">
  <!ENTITY md5       "${PACKAGE_MD5}">
  <!ENTITY launch    "Settings/FilesViewerSettings">
 ]>

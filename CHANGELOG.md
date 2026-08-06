@@ -1,6 +1,36 @@
 
 # Files Viewer
 
+## Version 2026.08.06
+
+### New Features
+- Favourites. Pin a folder or a file with the star next to the path, and jump straight back to it from the Favourites button. They are kept on the server, so they are there from any browser
+- Action buttons can be plain grey instead of coloured, from the settings page. Delete and Recycle Bin keep their colour either way
+
+### Fixed
+- The recycle bin never emptied itself. The daily clean-up was never installed, so nothing ever aged out. It runs now and follows the retention you set
+- Deleting a share or a disk from the top level emptied everything inside it. Those can no longer be deleted, renamed or moved
+- A delete could still go through permanently while the recycle bin was switched on. The setting decides now, not the page
+- Owner and permission changes did not show in the listing until you left the folder and came back
+- Updating the plugin reset the permissions format back to octal every time
+- Create and Upload went dead whenever a file was open in the preview
+- There was no obvious way to close a preview. Clicking the open file again closes it, and so does Escape
+- The Edit button gave no hint why it was greyed out on a file that previews fine. The editor takes files up to 2 MB, whatever the preview limit is set to
+- An upload that was cancelled or cut off left a hidden file behind in the folder
+- A folder with more items than the listing can hold gave no sign that anything was missing
+- The Space scan looked frozen. The progress counter and the Cancel button only woke up every so many folders, so on a share with a lot of files in few folders they barely moved. They follow the files now
+- A file too big to preview said only that it was over the limit. It names the limit and the kind of file now, so you can see which one you hit
+- All four Unraid themes are properly supported now. Gray and Azure were falling back to the Black and White palettes, and the colours on the buttons and file icons were too faint to read on the light ones
+- Applying settings wrote to the flash drive even when nothing had changed, and said nothing when a write failed
+
+### Changed
+- The recycle bin is off by default now. Existing installs keep whatever you had set
+- Text preview limit, inline image limit and archive listing limit always showed the first option in the list instead of what you had saved, and pressing Apply then wrote that first option over your setting
+- Removing the plugin no longer deletes anything of yours. Your settings and your recycle bins stay where they are, and a reinstall picks them up
+- The Space button is off by default now. It reads every file under the folder and runs for many minutes on a large share, so you switch it on yourself when you want it
+- The line under each name shows when the file was last changed, and drops the words Folder, File and Text that the icon already tells you
+- Leaving a file with unsaved changes asks in the plugin's own window instead of the browser popup
+
 ## Version 2026.07.25
 
 ### Fixed

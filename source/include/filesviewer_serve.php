@@ -5,9 +5,9 @@
    License: GPLv3
    ========================================================================= */
 
-// streams raw file bytes for the in-page preview (images now, media and pdf in
-// the phases that follow) and for raw or download links. all the safety lives in
-// the shared class: path containment, the fixed mime map, and the csrf gate.
+// streams raw file bytes for the in-page preview and for raw or download links.
+// all the safety lives in the shared class: path containment, the fixed mime map,
+// and the csrf gate.
 require_once __DIR__ . '/filesviewer_api.php';
 
 if (!FilesViewerEndpoint::validateCsrf()) {

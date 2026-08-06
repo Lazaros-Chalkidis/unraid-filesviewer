@@ -25,6 +25,35 @@
   --fv-warn-text:     #ffb443;
   --fv-crit:          #e24b4a;
 
+  /* one entry per action and per file kind. the light themes override the whole
+     set, because a colour that reads well on black washes out on white */
+  --fv-k-create: #5cc46a;
+  --fv-k-rename: #e0a93a;
+  --fv-k-move: #b08ae8;
+  --fv-k-copy: #56a8e0;
+  --fv-k-upload: #3bb6a2;
+  --fv-k-download: #8a93f0;
+  --fv-k-edit: #e0823a;
+  --fv-k-owner: #d072b5;
+  --fv-k-perm: #a3b0cc;
+  --fv-k-recycle: #8fb84a;
+  --fv-k-danger: #e06a6a;
+  --fv-k-danger-hi: #e8807f;
+  --fv-k-dir: #ecc25b;
+  --fv-k-img: #6fb6ff;
+  --fv-k-code: #8ab6ff;
+  --fv-k-md: #c4a9f0;
+  --fv-k-pdf: #ff8a72;
+  --fv-k-audio: #ffc06b;
+  --fv-k-video: #79b8f0;
+  --fv-k-sqlite: #6fd6a6;
+  --fv-k-doc: #7aa6ff;
+  --fv-k-sheet: #62cd8a;
+  --fv-k-ebook: #c4a0f0;
+  --fv-k-font: #ec8ab8;
+  --fv-k-ptdir: #f7a866;
+  --fv-k-pvactive: #cfe6ff;
+
   --fv-tint-img:   rgba(66,165,245,.16);
   --fv-tint-code:  rgba(120,170,235,.16);
   --fv-tint-md:    rgba(169,142,224,.18);
@@ -74,10 +103,10 @@
 .fv-header__left  { display: flex; align-items: center; gap: .75rem; min-width: 0; }
 .fv-header__icon  { width: 36px; height: 36px; object-fit: contain; }
 .fv-header__title { margin: 0; font-size: 1.6rem; font-weight: 700; color: var(--fv-text); text-transform: uppercase; }
-.fv-header__sub   { display: flex; align-items: center; gap: .5rem; font-size: .94rem; text-transform: uppercase; letter-spacing: .7px; color: var(--fv-text-muted); }
+.fv-header__sub   { display: flex; align-items: center; gap: .5rem; font-size: 1.1rem; letter-spacing: 0.1px; color: var(--fv-text-muted); }
 .fv-header__sub .fv-browser__count { color: var(--fv-text-dim); }
 .fv-header__right { display: flex; flex-direction: column; align-items: flex-end; gap: .7rem; }
-.fv-header__icons { display: flex; align-items: center; gap: .3rem; }
+.fv-header__icons { display: flex; align-items: center; gap: .6rem; }
 .fv-header__icons a {
   display: inline-flex !important;
   align-items: center !important;
@@ -102,7 +131,7 @@
   align-items: center;
   justify-content: flex-start;
   gap: .7rem;
-  padding: .14rem .5rem;
+  padding: 1.01rem 1.05rem;
   margin-bottom: .6rem;
   background: var(--fv-bg-subtle);
   border: 1px solid var(--fv-border);
@@ -127,7 +156,7 @@
 .fv-fileops {
   display: flex;
   align-items: center;
-  gap: .3rem;
+  gap: .9rem;
   flex: 1 1 auto;
   flex-shrink: 0;
 }
@@ -138,6 +167,7 @@
   align-items: center !important;
   gap: .3rem !important;
   padding: 3px 9px !important;
+  margin: 0 !important;   /* the unraid theme spaces buttons apart on its own */
   border-radius: 4px !important;
   cursor: pointer !important;
   font-size: 11px !important;
@@ -164,34 +194,48 @@
 .fv-opbtn--danger {
   background: rgba(224,106,106,.1) !important;
   border-color: rgba(224,106,106,.32) !important;
-  color: #e06a6a !important;
+  color: var(--fv-k-danger) !important;
 }
 .fv-opbtn--danger:hover {
   background: rgba(224,106,106,.2) !important;
   border-color: rgba(224,106,106,.5) !important;
-  color: #e8807f !important;
+  color: var(--fv-k-danger-hi) !important;
 }
 /* one colour per action, keyed to what it does */
-.fv-opbtn--create   { background: rgba(76,175,80,.1) !important;  border-color: rgba(76,175,80,.3) !important;  color: #5cc46a !important; }
+.fv-opbtn--create   { background: rgba(76,175,80,.1) !important;  border-color: rgba(76,175,80,.3) !important;  color: var(--fv-k-create) !important; }
 .fv-opbtn--create:hover   { background: rgba(76,175,80,.2) !important;  border-color: rgba(76,175,80,.5) !important; }
-.fv-opbtn--rename   { background: rgba(224,169,58,.1) !important;  border-color: rgba(224,169,58,.32) !important; color: #e0a93a !important; }
+.fv-opbtn--rename   { background: rgba(224,169,58,.1) !important;  border-color: rgba(224,169,58,.32) !important; color: var(--fv-k-rename) !important; }
 .fv-opbtn--rename:hover   { background: rgba(224,169,58,.2) !important;  border-color: rgba(224,169,58,.5) !important; }
-.fv-opbtn--move     { background: rgba(150,120,225,.13) !important; border-color: rgba(150,120,225,.34) !important; color: #b08ae8 !important; }
+.fv-opbtn--move     { background: rgba(150,120,225,.13) !important; border-color: rgba(150,120,225,.34) !important; color: var(--fv-k-move) !important; }
 .fv-opbtn--move:hover     { background: rgba(150,120,225,.24) !important; border-color: rgba(150,120,225,.55) !important; }
-.fv-opbtn--copy     { background: rgba(66,168,224,.12) !important;  border-color: rgba(66,168,224,.32) !important; color: #56a8e0 !important; }
+.fv-opbtn--copy     { background: rgba(66,168,224,.12) !important;  border-color: rgba(66,168,224,.32) !important; color: var(--fv-k-copy) !important; }
 .fv-opbtn--copy:hover     { background: rgba(66,168,224,.22) !important;  border-color: rgba(66,168,224,.52) !important; }
-.fv-opbtn--upload   { background: rgba(38,180,160,.13) !important;  border-color: rgba(38,180,160,.34) !important; color: #3bb6a2 !important; }
+.fv-opbtn--upload   { background: rgba(38,180,160,.13) !important;  border-color: rgba(38,180,160,.34) !important; color: var(--fv-k-upload) !important; }
 .fv-opbtn--upload:hover   { background: rgba(38,180,160,.24) !important;  border-color: rgba(38,180,160,.55) !important; }
-.fv-opbtn--download { background: rgba(120,130,235,.13) !important; border-color: rgba(120,130,235,.34) !important; color: #8a93f0 !important; }
+.fv-opbtn--download { background: rgba(120,130,235,.13) !important; border-color: rgba(120,130,235,.34) !important; color: var(--fv-k-download) !important; }
 .fv-opbtn--download:hover { background: rgba(120,130,235,.24) !important; border-color: rgba(120,130,235,.55) !important; }
-.fv-opbtn--edit     { background: rgba(224,130,58,.1) !important;  border-color: rgba(224,130,58,.32) !important; color: #e0823a !important; }
+.fv-opbtn--edit     { background: rgba(224,130,58,.1) !important;  border-color: rgba(224,130,58,.32) !important; color: var(--fv-k-edit) !important; }
 .fv-opbtn--edit:hover     { background: rgba(224,130,58,.2) !important;  border-color: rgba(224,130,58,.5) !important; }
-.fv-opbtn--owner    { background: rgba(208,114,181,.12) !important; border-color: rgba(208,114,181,.34) !important; color: #d072b5 !important; }
+.fv-opbtn--owner    { background: rgba(208,114,181,.12) !important; border-color: rgba(208,114,181,.34) !important; color: var(--fv-k-owner) !important; }
 .fv-opbtn--owner:hover    { background: rgba(208,114,181,.22) !important; border-color: rgba(208,114,181,.55) !important; }
-.fv-opbtn--perm     { background: rgba(148,163,192,.14) !important; border-color: rgba(148,163,192,.36) !important; color: #a3b0cc !important; }
+.fv-opbtn--perm     { background: rgba(148,163,192,.14) !important; border-color: rgba(148,163,192,.36) !important; color: var(--fv-k-perm) !important; }
 .fv-opbtn--perm:hover     { background: rgba(148,163,192,.24) !important; border-color: rgba(148,163,192,.55) !important; }
-.fv-opbtn--recycle  { background: rgba(143,184,74,.13) !important;  border-color: rgba(143,184,74,.34) !important; color: #8fb84a !important; }
+.fv-opbtn--recycle  { background: rgba(143,184,74,.13) !important;  border-color: rgba(143,184,74,.34) !important; color: var(--fv-k-recycle) !important; }
 .fv-opbtn--recycle:hover  { background: rgba(143,184,74,.24) !important;  border-color: rgba(143,184,74,.55) !important; }
+/* plain mode: the per action colours fall back to the base look, the one the
+   Space button already has. active and disabled keep their own styling, and
+   delete and recycle bin keep theirs because there the colour is a warning */
+.fv-btn-plain .fv-fileops .fv-opbtn:not(.active):not(:disabled):not(.fv-opbtn--danger):not(.fv-opbtn--recycle) {
+  background: var(--fv-bg-subtle) !important;
+  border-color: var(--fv-border) !important;
+  color: var(--fv-text-mid) !important;
+}
+.fv-btn-plain .fv-fileops .fv-opbtn:not(.active):not(:disabled):not(.fv-opbtn--danger):not(.fv-opbtn--recycle):hover {
+  background: var(--fv-border-subtle) !important;
+  border-color: var(--fv-border-strong) !important;
+  color: var(--fv-text) !important;
+}
+
 .fv-opbtn.active {
   background: rgba(66,165,245,.18) !important;
   border-color: rgba(66,165,245,.5) !important;
@@ -251,7 +295,14 @@
 .fv-item--up    { color: var(--fv-text-dim); }
 .fv-item__meta  { min-width: 0; flex: 1; }
 .fv-item__name  { font-size: 1.22rem; color: var(--fv-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.fv-item__sub   { font-size: 1.03rem; color: var(--fv-text-muted); }
+.fv-item__sub   { display: flex; align-items: baseline; font-size: 1.03rem; color: var(--fv-text-muted); }
+
+/* size, mode and date have a bounded width, the owner is the only field that can
+   be anything, so it is the one that gives way instead of wrapping the row */
+.fv-sub__cell  { flex: none; white-space: nowrap; }
+.fv-sub__owner { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* the separator sits at the start of the next cell, so a clipped owner keeps it */
+.fv-sub__cell + .fv-sub__cell::before { content: '\00b7'; padding: 0 .42em; }
 
 .fv-ico {
   width: 36px; height: 36px;
@@ -262,7 +313,7 @@
   background: var(--fv-tint-bin);
   color: var(--fv-text-mid);
 }
-.fv-ico.dir   { background: transparent; color: #ecc25b; }
+.fv-ico.dir   { background: transparent; color: var(--fv-k-dir); }
 .fv-ico.dir svg { width: 30px; height: 30px; }
 .fv-ico--doc  { background: transparent; position: relative; }
 .fv-docicon   { width: 30px; height: 30px; display: block; }
@@ -273,19 +324,27 @@
   font-weight: 700; line-height: 1; letter-spacing: .2px;
   pointer-events: none;
 }
-.fv-ico.img   { background: var(--fv-tint-img);   color: #6fb6ff; }
-.fv-ico.code  { background: var(--fv-tint-code);  color: #8ab6ff; }
-.fv-ico.md    { background: var(--fv-tint-md);    color: #c4a9f0; }
-.fv-ico.pdf   { background: var(--fv-tint-pdf);   color: #ff8a72; }
-.fv-ico.audio { background: var(--fv-tint-audio); color: #ffc06b; font-size: 1.65rem; line-height: 1; }
-.fv-ico.video { background: var(--fv-tint-video); color: #79b8f0; }
+.fv-ico.img   { background: var(--fv-tint-img);   color: var(--fv-k-img); }
+.fv-ico.code  { background: var(--fv-tint-code);  color: var(--fv-k-code); }
+.fv-ico.md    { background: var(--fv-tint-md);    color: var(--fv-k-md); }
+.fv-ico.pdf   { background: var(--fv-tint-pdf);   color: var(--fv-k-pdf); }
+.fv-ico.audio { background: var(--fv-tint-audio); color: var(--fv-k-audio); font-size: 1.65rem; line-height: 1; }
+.fv-ico.video { background: var(--fv-tint-video); color: var(--fv-k-video); }
 .fv-ico.arch  { background: var(--fv-tint-arch);  color: var(--fv-text-mid); }
 .fv-ico.bin   { background: var(--fv-tint-bin);   color: var(--fv-text-dim); }
-.fv-ico.sqlite{ background: var(--fv-tint-sqlite);color: #6fd6a6; }
-.fv-ico.doc   { background: var(--fv-tint-doc);   color: #7aa6ff; }
-.fv-ico.sheet { background: var(--fv-tint-sheet); color: #62cd8a; }
-.fv-ico.ebook { background: var(--fv-tint-ebook); color: #c4a0f0; }
-.fv-ico.font  { background: var(--fv-tint-font);  color: #ec8ab8; font-weight: 700; }
+.fv-ico.sqlite{ background: var(--fv-tint-sqlite);color: var(--fv-k-sqlite); }
+.fv-ico.doc   { background: var(--fv-tint-doc);   color: var(--fv-k-doc); }
+.fv-ico.sheet { background: var(--fv-tint-sheet); color: var(--fv-k-sheet); }
+.fv-ico.ebook { background: var(--fv-tint-ebook); color: var(--fv-k-ebook); }
+.fv-ico.font  { background: var(--fv-tint-font);  color: var(--fv-k-font); font-weight: 700; }
+
+.fv-list-note {
+  padding: .9rem;
+  font-size: 1.03rem;
+  color: var(--fv-text-muted);
+  text-align: center;
+  border-top: 1px solid var(--fv-border-subtle);
+}
 
 .fv-list-empty,
 .fv-error {
@@ -307,11 +366,89 @@
   display: flex;
   flex-direction: column;
 }
+/* the star toggles the path in the crumbs: outline when it is not a favourite,
+   filled when it is */
+/* !important throughout: the unraid theme paints every bare button orange with a
+   border, the same reason the other buttons here carry it */
+.fv-star {
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  flex: 0 0 auto !important;
+  align-self: center !important;
+  width: 2rem !important;
+  height: 2rem !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+  background: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  cursor: pointer !important;
+  font-family: inherit !important;
+  color: var(--fv-accent) !important;
+}
+/* the viewBox is cropped to the drawing, so the glyph fills the button and the
+   gap either side matches the buttons next to it */
+.fv-star svg { width: 100% !important; height: 100% !important; }
+.fv-star[aria-pressed="true"] svg { fill: var(--fv-accent); }
+.fv-star:disabled { opacity: .35; cursor: default; }
+
+.fv-fav-wrap { position: relative; display: inline-flex; }
+.fv-fav-caret { margin-left: .35rem; font-size: .85em; opacity: .7; }
+.fv-fav-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 40;
+  min-width: 190px;
+  max-width: 300px;
+  padding: 3px 0;
+  background: var(--fv-surface);
+  border: 1px solid var(--fv-border-strong);
+  border-radius: 4px;
+  box-shadow: 0 6px 20px rgba(0,0,0,.5);
+}
+/* same reason as the star, plus text-transform because a file name has to keep
+   the case it has on disk */
+.fv-fav-item {
+  display: flex !important;
+  align-items: center !important;
+  gap: .5rem !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  padding: 6px 10px !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: none !important;
+  box-shadow: none !important;
+  outline: none !important;
+  cursor: pointer !important;
+  font-family: inherit !important;
+  font-size: 1.05rem !important;
+  font-weight: 400 !important;
+  line-height: 1.4 !important;
+  letter-spacing: normal !important;
+  text-transform: none !important;
+  text-align: left !important;
+  color: var(--fv-text) !important;
+}
+.fv-fav-item:hover { background: var(--fv-bg-subtle) !important; }
+.fv-fav-item__name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-fav-item__ico  { flex: none; opacity: .55; }
+.fv-fav-empty { padding: 7px 10px; color: var(--fv-text-dim); font-size: 1.02rem; }
+
 .fv-preview__head {
   display: flex;
   align-items: center;
   gap: .6rem;
-  padding: 0 .9rem;
+  padding: 0.7rem 1.05rem;
   border-bottom: 1px solid var(--fv-border-subtle);
 }
 
@@ -352,20 +489,20 @@
   padding: 2px 7px;
 }
 .fv-preview__type:empty { display: none; }
-.fv-preview__type.fv-pt-dir   { background: rgba(244,125,66,.18); color: #f7a866; border-color: transparent; }
-.fv-preview__type.fv-pt-img   { background: var(--fv-tint-img);   color: #6fb6ff; border-color: transparent; }
-.fv-preview__type.fv-pt-code  { background: var(--fv-tint-code);  color: #8ab6ff; border-color: transparent; }
-.fv-preview__type.fv-pt-md    { background: var(--fv-tint-md);    color: #c4a9f0; border-color: transparent; }
-.fv-preview__type.fv-pt-pdf   { background: var(--fv-tint-pdf);   color: #ff8a72; border-color: transparent; }
-.fv-preview__type.fv-pt-audio { background: var(--fv-tint-audio); color: #ffc06b; border-color: transparent; }
-.fv-preview__type.fv-pt-video { background: var(--fv-tint-video); color: #79b8f0; border-color: transparent; }
+.fv-preview__type.fv-pt-dir   { background: rgba(244,125,66,.18); color: var(--fv-k-ptdir); border-color: transparent; }
+.fv-preview__type.fv-pt-img   { background: var(--fv-tint-img);   color: var(--fv-k-img); border-color: transparent; }
+.fv-preview__type.fv-pt-code  { background: var(--fv-tint-code);  color: var(--fv-k-code); border-color: transparent; }
+.fv-preview__type.fv-pt-md    { background: var(--fv-tint-md);    color: var(--fv-k-md); border-color: transparent; }
+.fv-preview__type.fv-pt-pdf   { background: var(--fv-tint-pdf);   color: var(--fv-k-pdf); border-color: transparent; }
+.fv-preview__type.fv-pt-audio { background: var(--fv-tint-audio); color: var(--fv-k-audio); border-color: transparent; }
+.fv-preview__type.fv-pt-video { background: var(--fv-tint-video); color: var(--fv-k-video); border-color: transparent; }
 .fv-preview__type.fv-pt-arch  { background: var(--fv-tint-arch);  color: var(--fv-text-mid); border-color: transparent; }
 .fv-preview__type.fv-pt-bin   { background: var(--fv-tint-bin);   color: var(--fv-text-dim); border-color: transparent; }
-.fv-preview__type.fv-pt-sqlite{ background: var(--fv-tint-sqlite);color: #6fd6a6; border-color: transparent; }
-.fv-preview__type.fv-pt-doc   { background: var(--fv-tint-doc);   color: #7aa6ff; border-color: transparent; }
-.fv-preview__type.fv-pt-sheet { background: var(--fv-tint-sheet); color: #62cd8a; border-color: transparent; }
-.fv-preview__type.fv-pt-ebook { background: var(--fv-tint-ebook); color: #c4a0f0; border-color: transparent; }
-.fv-preview__type.fv-pt-font  { background: var(--fv-tint-font);  color: #ec8ab8; border-color: transparent; }
+.fv-preview__type.fv-pt-sqlite{ background: var(--fv-tint-sqlite);color: var(--fv-k-sqlite); border-color: transparent; }
+.fv-preview__type.fv-pt-doc   { background: var(--fv-tint-doc);   color: var(--fv-k-doc); border-color: transparent; }
+.fv-preview__type.fv-pt-sheet { background: var(--fv-tint-sheet); color: var(--fv-k-sheet); border-color: transparent; }
+.fv-preview__type.fv-pt-ebook { background: var(--fv-tint-ebook); color: var(--fv-k-ebook); border-color: transparent; }
+.fv-preview__type.fv-pt-font  { background: var(--fv-tint-font);  color: var(--fv-k-font); border-color: transparent; }
 .fv-preview__body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; position: relative; }
 
 /* ---- empty state ---------------------------------------------------------- */
@@ -463,9 +600,70 @@
   --fv-text-dim:      rgba(0,0,0,.45);
   --fv-text-muted:    rgba(0,0,0,.35);
   --fv-bg-subtle:     rgba(0,0,0,.03);
+  --fv-k-create: #278133;
+  --fv-k-rename: #94680d;
+  --fv-k-move: #8a4be8;
+  --fv-k-copy: #1575b7;
+  --fv-k-upload: #217e6f;
+  --fv-k-download: #4e5df5;
+  --fv-k-edit: #b25610;
+  --fv-k-owner: #c23499;
+  --fv-k-perm: #5570a9;
+  --fv-k-recycle: #5b7a28;
+  --fv-k-danger: #dc1f1f;
+  --fv-k-danger-hi: #de1b19;
+  --fv-k-dir: #916907;
+  --fv-k-img: #006ddd;
+  --fv-k-code: #0563ff;
+  --fv-k-md: #884bec;
+  --fv-k-pdf: #da2500;
+  --fv-k-audio: #a65f00;
+  --fv-k-video: #0971cd;
+  --fv-k-sqlite: #1c8051;
+  --fv-k-doc: #1663ff;
+  --fv-k-sheet: #208044;
+  --fv-k-ebook: #9144ee;
+  --fv-k-font: #d71470;
+  --fv-k-ptdir: #b65300;
+  --fv-k-pvactive: #006ce1;
 }
 .fv-wrapper.fv-light .fv-panel { background: rgba(0,0,0,.02); }
 .fv-wrapper.fv-light .fv-item.active { background: rgba(66,165,245,.14); }
+
+/* gray is the second dark theme: the unraid page behind us is lighter than black,
+   so the surfaces lift to match instead of sitting in a hole. same values the
+   settings page already uses */
+.fv-wrapper.fv-theme-gray {
+  --fv-bg:            #2c2c2c;
+  --fv-surface:       #353535;
+  --fv-surface2:      #3d3d3d;
+  --fv-border:        rgba(255,255,255,.13);
+  --fv-border-strong: rgba(255,255,255,.20);
+  --fv-border-subtle: rgba(255,255,255,.07);
+  --fv-text:          rgba(255,255,255,.92);
+  --fv-text-mid:      rgba(255,255,255,.66);
+  --fv-text-dim:      rgba(255,255,255,.46);
+  --fv-text-muted:    rgba(255,255,255,.32);
+  --fv-bg-subtle:     rgba(255,255,255,.05);
+  --fv-k-move: #b28de9;
+  --fv-k-download: #8f98f1;
+  --fv-k-edit: #e28945;
+  --fv-k-owner: #d684bf;
+  --fv-k-danger: #e58383;
+}
+
+/* azure is a light theme with a blue cast, so the surfaces carry the same cast
+   rather than sitting as pure white on a tinted page */
+.fv-wrapper.fv-theme-azure {
+  --fv-bg:            #eef3f8;
+  --fv-surface:       #f5f8fb;
+  --fv-surface2:      #e6eef6;
+  --fv-border:        rgba(21,101,192,.16);
+  --fv-border-strong: rgba(21,101,192,.26);
+  --fv-border-subtle: rgba(21,101,192,.10);
+  --fv-accent:        #1565c0;
+}
+.fv-wrapper.fv-theme-azure .fv-filter__input { background: #fbfdff !important; }
 
 /* ============================================================================
    Preview content (Phase B): images, text/code, markdown
@@ -473,7 +671,7 @@
 
 /* toolbar in the preview head */
 .fv-preview__tools { margin-left: auto; display: flex; gap: .35rem; flex-wrap: wrap; }
-.fv-pv-actions { display: flex; align-items: center; gap: .35rem; flex: 0 0 auto; }
+.fv-pv-actions { display: flex; align-items: center; gap: .9rem; flex: 0 0 auto; }
 .fv-pv-actions .fv-opbtn { padding: 3px 5px !important; font-size: .9rem !important; }
 /* sized like the wrap and open raw buttons so the header row reads as one set */
 .fv-pv-btn {
@@ -501,7 +699,7 @@
   transition: background .15s ease, color .15s ease, border-color .15s ease !important;
 }
 .fv-pv-btn:hover  { background: var(--fv-bg-subtle) !important; color: var(--fv-text) !important; }
-.fv-pv-btn.active { background: rgba(66,165,245,.18) !important; border-color: rgba(66,165,245,.5) !important; color: #cfe6ff !important; }
+.fv-pv-btn.active { background: rgba(66,165,245,.18) !important; border-color: rgba(66,165,245,.5) !important; color: var(--fv-k-pvactive) !important; }
 
 /* banners above a preview */
 .fv-trunc, .fv-note {
@@ -862,6 +1060,9 @@
 }
 .fv-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.025); }
 .fv-light .fv-table tbody tr:nth-child(even) td { background: rgba(0,0,0,.025); }
+/* the thumb is a white wash, invisible on a light page */
+.fv-light .fv-tablewrap::-webkit-scrollbar-thumb,
+.fv-light .fv-csvwrap::-webkit-scrollbar-thumb { background: rgba(0,0,0,.22); }
 .fv-tablewrap::-webkit-scrollbar, .fv-csvwrap::-webkit-scrollbar { width: 9px; height: 9px; }
 .fv-tablewrap::-webkit-scrollbar-thumb, .fv-csvwrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 5px; }
 
@@ -987,6 +1188,60 @@
   --fv-text-dim:      rgba(0,0,0,.45);
   --fv-text-muted:    rgba(0,0,0,.35);
   --fv-bg-subtle:     rgba(0,0,0,.03);
+  --fv-k-create: #278133;
+  --fv-k-rename: #94680d;
+  --fv-k-move: #8a4be8;
+  --fv-k-copy: #1575b7;
+  --fv-k-upload: #217e6f;
+  --fv-k-download: #4e5df5;
+  --fv-k-edit: #b25610;
+  --fv-k-owner: #c23499;
+  --fv-k-perm: #5570a9;
+  --fv-k-recycle: #5b7a28;
+  --fv-k-danger: #dc1f1f;
+  --fv-k-danger-hi: #de1b19;
+  --fv-k-dir: #916907;
+  --fv-k-img: #006ddd;
+  --fv-k-code: #0563ff;
+  --fv-k-md: #884bec;
+  --fv-k-pdf: #da2500;
+  --fv-k-audio: #a65f00;
+  --fv-k-video: #0971cd;
+  --fv-k-sqlite: #1c8051;
+  --fv-k-doc: #1663ff;
+  --fv-k-sheet: #208044;
+  --fv-k-ebook: #9144ee;
+  --fv-k-font: #d71470;
+  --fv-k-ptdir: #b65300;
+  --fv-k-pvactive: #006ce1;
+}
+
+/* these two follow the light block on purpose: azure also carries fv-light and
+   would otherwise be repainted pure white by it */
+.fv-modal.fv-theme-gray {
+  --fv-surface:       #353535;
+  --fv-surface2:      #3d3d3d;
+  --fv-border:        rgba(255,255,255,.13);
+  --fv-border-strong: rgba(255,255,255,.20);
+  --fv-border-subtle: rgba(255,255,255,.07);
+  --fv-text:          rgba(255,255,255,.92);
+  --fv-text-mid:      rgba(255,255,255,.66);
+  --fv-text-dim:      rgba(255,255,255,.46);
+  --fv-text-muted:    rgba(255,255,255,.32);
+  --fv-bg-subtle:     rgba(255,255,255,.05);
+  --fv-k-move: #b28de9;
+  --fv-k-download: #8f98f1;
+  --fv-k-edit: #e28945;
+  --fv-k-owner: #d684bf;
+  --fv-k-danger: #e58383;
+}
+.fv-modal.fv-theme-azure {
+  --fv-surface:       #f5f8fb;
+  --fv-surface2:      #e6eef6;
+  --fv-border:        rgba(21,101,192,.16);
+  --fv-border-strong: rgba(21,101,192,.26);
+  --fv-border-subtle: rgba(21,101,192,.10);
+  --fv-accent:        #1565c0;
 }
 .fv-modal__panel {
   width: 100%;
@@ -1037,6 +1292,7 @@
 
 .fv-btn {
   padding: .45rem .9rem !important;
+  margin: 0 !important;   /* same reason as the toolbar buttons */
   border-radius: var(--fv-radius) !important;
   border: 1px solid var(--fv-border-strong) !important;
   background: var(--fv-bg-subtle) !important;
@@ -1051,7 +1307,7 @@
 .fv-btn:disabled { opacity: .5 !important; cursor: not-allowed !important; }
 .fv-btn--primary { background: rgba(66,165,245,.16) !important; border-color: rgba(66,165,245,.45) !important; color: var(--fv-accent) !important; }
 .fv-btn--primary:hover { background: rgba(66,165,245,.26) !important; }
-.fv-btn--danger { background: rgba(224,106,106,.14) !important; border-color: rgba(224,106,106,.45) !important; color: #e8807f !important; }
+.fv-btn--danger { background: rgba(224,106,106,.14) !important; border-color: rgba(224,106,106,.45) !important; color: var(--fv-k-danger-hi) !important; }
 .fv-btn--danger:hover { background: rgba(224,106,106,.24) !important; }
 
 /* ---- list selection (checkboxes) ----------------------------------------- */
@@ -1188,7 +1444,7 @@
   cursor: pointer !important;
   transition: background .2s, border-color .2s, color .2s !important;
 }
-.fv-up2-del:hover { color: #e8807f !important; border-color: rgba(224,106,106,.5) !important; background: rgba(224,106,106,.16) !important; }
+.fv-up2-del:hover { color: var(--fv-k-danger-hi) !important; border-color: rgba(224,106,106,.5) !important; background: rgba(224,106,106,.16) !important; }
 .fv-up2-name { flex: 1 1 auto; min-width: 0; color: var(--fv-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fv-up2-name i { color: var(--fv-text-muted); font-style: normal; }
 .fv-up2-size { color: var(--fv-text-dim); flex: 0 0 auto; }

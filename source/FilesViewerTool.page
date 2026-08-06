@@ -28,10 +28,12 @@ $lightClass = $fv_light ? ' fv-light' : '';
 $var = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
 
 $fvCfg = FilesViewerEndpoint::config();
+$monoClass = $fvCfg['btn_colors'] ? '' : ' fv-btn-plain';
 $tool_config = [
     'fvToken'    => FilesViewerEndpoint::generateNonce(),
     'csrfToken'  => (string)($var['csrf_token'] ?? ''),
     'lightTheme' => $fv_light,
+    'theme'      => $fv_theme,
     'imgMaxMb'   => $fvCfg['img_max_mb'],
     'autoplay'   => $fvCfg['autoplay'],
     'remember'   => $fvCfg['remember'],
@@ -45,7 +47,7 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
 <link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/tool.css">
 <script>window.filesviewerToolConfig = <?= $tool_config_json ?>;</script>
 
-<div class="fv-wrapper<?= $themeClass . $lightClass ?>">
+<div class="fv-wrapper<?= $themeClass . $lightClass . $monoClass ?>">
 
   <div class="fv-panel">
 
@@ -79,7 +81,13 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
         <button type="button" class="fv-opbtn fv-opbtn--perm"     id="fv-op-perm"     title="Change permissions"><i class="fa fa-lock" aria-hidden="true"></i><span>Permission</span></button>
         <button type="button" class="fv-opbtn fv-opbtn--upload"   id="fv-op-upload"   title="Upload"><i class="fa fa-upload" aria-hidden="true"></i><span>Upload</span></button>
         <button type="button" class="fv-opbtn fv-opbtn--download" id="fv-op-download" title="Download the selected file" disabled><i class="fa fa-download" aria-hidden="true"></i><span>Download</span></button>
+<?php if ($fvCfg['space']): ?>
         <button type="button" class="fv-opbtn" id="fv-op-space" title="Analyse folder space" disabled><i class="fa fa-pie-chart" aria-hidden="true"></i><span>Space</span></button>
+<?php endif; ?>
+        <div class="fv-fav-wrap">
+          <button type="button" class="fv-opbtn" id="fv-op-fav" title="Favourites" aria-haspopup="true" aria-expanded="false"><i class="fa fa-star-o" aria-hidden="true"></i><span>Favourites</span><i class="fa fa-caret-down fv-fav-caret" aria-hidden="true"></i></button>
+          <div class="fv-fav-menu" id="fv-fav-menu" role="menu" hidden></div>
+        </div>
         <button type="button" class="fv-opbtn fv-opbtn--danger"   id="fv-op-delete"   title="Delete"><i class="fa fa-trash-o" aria-hidden="true"></i><span>Delete</span></button>
         <button type="button" class="fv-opbtn fv-opbtn--recycle"  id="fv-op-recycle"  title="Recycle Bin"><i class="fa fa-recycle" aria-hidden="true"></i><span>Recycle Bin</span></button>
       </div>
@@ -101,6 +109,7 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
           <div class="fv-pv-actions" id="fv-pv-actions">
             <button type="button" class="fv-opbtn" id="fv-op-wrap" title="Toggle line wrapping" disabled><i class="fa fa-align-left" aria-hidden="true"></i><span>Wrap</span></button>
             <button type="button" class="fv-opbtn" id="fv-op-openraw" title="Open the file in a new tab" disabled><i class="fa fa-external-link" aria-hidden="true"></i><span>Open raw</span></button>
+            <button type="button" class="fv-star" id="fv-pv-star" title="Add to favourites" aria-label="Add to favourites" aria-pressed="false"><svg viewBox="2.7 2.7 18.6 17.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z"/></svg></button>
             <button type="button" class="fv-pv-close" id="fv-pv-close" title="Close preview" aria-label="Close preview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
           </div>
         </div>

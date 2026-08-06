@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "filesviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.07.25">
+ <!ENTITY version   "2026.08.06">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-filesviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/&branch;/&name;.plg">
- <!ENTITY md5       "d80dc1504555b14c77d43d7cad0b3152">
+ <!ENTITY md5       "5d6dbbd92a50ab1afd06352f011ee3a6">
  <!ENTITY launch    "Settings/FilesViewerSettings">
 ]>
 
@@ -27,6 +27,36 @@ A file browser and manager. Previews files and manages daily tasks. Deletes file
 <![CDATA[
 
 # Files Viewer
+
+## Version 2026.08.06
+
+### New Features
+- Favourites. Pin a folder or a file with the star next to the path, and jump straight back to it from the Favourites button. They are kept on the server, so they are there from any browser
+- Action buttons can be plain grey instead of coloured, from the settings page. Delete and Recycle Bin keep their colour either way
+
+### Fixed
+- The recycle bin never emptied itself. The daily clean-up was never installed, so nothing ever aged out. It runs now and follows the retention you set
+- Deleting a share or a disk from the top level emptied everything inside it. Those can no longer be deleted, renamed or moved
+- A delete could still go through permanently while the recycle bin was switched on. The setting decides now, not the page
+- Owner and permission changes did not show in the listing until you left the folder and came back
+- Updating the plugin reset the permissions format back to octal every time
+- Create and Upload went dead whenever a file was open in the preview
+- There was no obvious way to close a preview. Clicking the open file again closes it, and so does Escape
+- The Edit button gave no hint why it was greyed out on a file that previews fine. The editor takes files up to 2 MB, whatever the preview limit is set to
+- An upload that was cancelled or cut off left a hidden file behind in the folder
+- A folder with more items than the listing can hold gave no sign that anything was missing
+- The Space scan looked frozen. The progress counter and the Cancel button only woke up every so many folders, so on a share with a lot of files in few folders they barely moved. They follow the files now
+- A file too big to preview said only that it was over the limit. It names the limit and the kind of file now, so you can see which one you hit
+- All four Unraid themes are properly supported now. Gray and Azure were falling back to the Black and White palettes, and the colours on the buttons and file icons were too faint to read on the light ones
+- Applying settings wrote to the flash drive even when nothing had changed, and said nothing when a write failed
+
+### Changed
+- The recycle bin is off by default now. Existing installs keep whatever you had set
+- Text preview limit, inline image limit and archive listing limit always showed the first option in the list instead of what you had saved, and pressing Apply then wrote that first option over your setting
+- Removing the plugin no longer deletes anything of yours. Your settings and your recycle bins stay where they are, and a reinstall picks them up
+- The Space button is off by default now. It reads every file under the folder and runs for many minutes on a large share, so you switch it on yourself when you want it
+- The line under each name shows when the file was last changed, and drops the words Folder, File and Text that the icon already tells you
+- Leaving a file with unsaved changes asks in the plugin's own window instead of the browser popup
 
 ## Version 2026.07.25
 
@@ -81,12 +111,15 @@ FV_FOLDERS_FIRST="1"
 FV_REMEMBER="1"
 FV_SORT="name"
 FV_SORT_DIR="asc"
+FV_PERMS_FORMAT="octal"
 FV_TEXT_CAP_KB="2048"
 FV_MD_RENDER="1"
+FV_BTN_COLORS="1"
+FV_SPACE="0"
 FV_IMG_MAX_MB="50"
 FV_ARCHIVE_MAX="1000"
 FV_AUTOPLAY="0"
-FV_RECYCLE="1"
+FV_RECYCLE="0"
 FV_RECYCLE_DAYS="30"
   </INLINE>
 </FILE>
@@ -119,6 +152,15 @@ BAK=/boot/config/plugins/&name;/&name;.cfg.bak
 if [[ -f "$BAK" ]]; then
     /usr/local/emhttp/plugins/&name;/scripts/merge_cfg.sh "$CFG" "$BAK"
     rm -f "$BAK"
+fi
+
+# Daily sweep of expired recycle bin events. dcron reads only the root crontab, so
+# the drop-in has to be merged in by Unraid. /etc is tmpfs, and the plg runs again
+# on every boot, which is what puts the file back.
+cp -f /usr/local/emhttp/plugins/&name;/&name;.cron /etc/cron.d/&name;
+chmod 644 /etc/cron.d/&name;
+if [[ -x /usr/local/sbin/update_cron ]]; then
+    /usr/local/sbin/update_cron
 fi
 
 # The bin is for this UI only: a managed block in smb-extra.conf vetoes the
@@ -154,14 +196,17 @@ echo ""
 
 <FILE Run="/bin/bash" Method="remove">
 <INLINE>
-# With the bin enabled an uninstall also empties every bin, nothing hides on
-# the shares. A missing key means the default, on. Runs before the config rm.
-FVCFG=/boot/config/plugins/&name;/&name;.cfg
-FVPURGE=1
-if grep -q ^FV_RECYCLE=.0 "$FVCFG" 2>/dev/null; then FVPURGE=0; fi
-if [[ "$FVPURGE" == "1" ]]; then
-    rm -rf /mnt/*/*/.RecycleBin
+rm -f /etc/cron.d/&name;
+if [[ -x /usr/local/sbin/update_cron ]]; then
+    /usr/local/sbin/update_cron
 fi
+
+# Removing a plugin is one click with no confirmation and it is usually a
+# reinstall, so nothing the user put there is ours to delete. Counted before the
+# veto goes, only to decide whether the closing text mentions the bins at all.
+shopt -s nullglob
+FVBINS=(/mnt/*/*/.RecycleBin)
+shopt -u nullglob
 
 # Drop the managed Samba block and let Samba reread its config.
 sed -i "/FILESVIEWER RECYCLE BEGIN/,/FILESVIEWER RECYCLE END/d" /boot/config/smb-extra.conf 2>/dev/null
@@ -169,11 +214,28 @@ smbcontrol all reload-config >/dev/null 2>/dev/null
 
 removepkg &name;-&version;
 rm -rf /usr/local/emhttp/plugins/&name;
-rm -rf /boot/config/plugins/&name;
+rm -rf /tmp/&name;
+rm -f /var/log/&name;.log
+
+# On the boot device only our own files go, the cfg holds the user settings
+rm -f /boot/config/plugins/&name;/&name;-*.txz /boot/config/plugins/&name;/&name;-*.txz.b64 /boot/config/plugins/&name;/&name;.cfg.bak
+rmdir /boot/config/plugins/&name; 2>/dev/null
 
 echo ""
 echo "----------------------------------------------------"
 echo " &name; has been removed."
+echo ""
+echo " Your settings were left in place:"
+echo "   /boot/config/plugins/&name;/&name;.cfg"
+if (( ${#FVBINS[@]} )); then
+    echo ""
+    echo " The recycle bins were left as they are, with everything"
+    echo " still in them, and a reinstall picks them up. To see"
+    echo " what they hold:"
+    echo "   du -sh /mnt/*/*/.RecycleBin"
+    echo " To erase them for good:"
+    echo "   rm -rf /mnt/*/*/.RecycleBin"
+fi
 echo "----------------------------------------------------"
 echo ""
 </INLINE>

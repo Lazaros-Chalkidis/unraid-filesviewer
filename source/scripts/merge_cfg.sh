@@ -32,7 +32,10 @@ awk '
         eq = index($0, "=")
         if (eq > 0) {
             k = substr($0, 1, eq-1)
-            if (k != "") user[k] = $0
+            if (k != "") {
+                if (!(k in user)) order[++n] = k
+                user[k] = $0
+            }
         }
         next
     }
@@ -41,9 +44,13 @@ awk '
         eq = index($0, "=")
         if (eq > 0) {
             k = substr($0, 1, eq-1)
-            if (k in user) { print user[k]; next }
+            if (k in user) { seen[k] = 1; print user[k]; next }
         }
         print
+    }
+    # a key the defaults do not carry is still the user setting, an update never drops it
+    END {
+        for (i = 1; i <= n; i++) if (!(order[i] in seen)) print user[order[i]]
     }
 ' "$BAK" "$CFG" > "$TMP"
 

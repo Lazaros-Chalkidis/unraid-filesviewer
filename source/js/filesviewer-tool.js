@@ -16,7 +16,7 @@
     var _editMaxBytes   = 2 * 1024 * 1024;   // matches the server edit cap (2 MiB)
     var _autoplay = !!_cfg.autoplay;
     var _remember = (_cfg.remember !== false);   // default on
-    var _recycleOn = (_cfg.recycle !== false);   // default on: deletes go to the recycle bin
+    var _recycleOn = (_cfg.recycle === true);   // off unless the setting says otherwise
     var _permsFmt = (_cfg.permsFormat === 'symbolic') ? 'symbolic' : 'octal';
     var _roots    = _cfg.roots || [];
 
@@ -141,15 +141,27 @@
         if (_wrapBtn) _wrapBtn.classList.toggle('active', on);
     }
     // each renderer says which of the shared preview tools apply to it
-    function setFileTools(canWrap, canRaw, canEdit) {
+    function setFileTools(canWrap, canRaw, canEdit, editNote) {
         if (_wrapBtn) { _wrapBtn.disabled = !canWrap; _wrapBtn.classList.toggle('active', canWrap); }
         if (_rawBtn)  { _rawBtn.disabled = !canRaw; }
         _editable = !!canEdit;
+        _editNote = editNote || '';
         refreshEditBtn();
     }
-    // Edit needs both an editable file and edit mode switched on
+    // Edit needs both an editable file and edit mode switched on. a greyed out
+    // button on a file that previews fine reads as a fault, so it says why
     function refreshEditBtn() {
-        if (_editBtn) _editBtn.disabled = !(_editable && _editMode);
+        if (!_editBtn) return;
+        _editBtn.disabled = !(_editable && _editMode);
+        _editBtn.title = _editNote ||
+            (_editable && !_editMode ? 'Turn on editing with the eye icon first' : 'Edit');
+    }
+
+    // the editor cap is fixed at 2 MB and does not follow the preview limit
+    function editNote(size) {
+        return (size || 0) > _editMaxBytes
+            ? 'Too large to edit here, the editor takes files up to ' + formatBytes(_editMaxBytes)
+            : '';
     }
 
     // decimal units, kept identical to the other plugins
@@ -195,6 +207,7 @@
         var c = extColor(ext);
         return c ? (' style="background:' + c.bg + ';color:' + c.fg + '"') : '';
     }
+    var FILE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V8h4.5z"/></svg>';
     var FOLDER_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>';
 
     // files are drawn as a small document (white page, black outline, folded
@@ -228,17 +241,18 @@
         return svg + '<span class="fv-doc__tag" style="color:' + color + ';font-size:' + fs + 'px">' + esc(tag) + '</span>';
     }
 
-    // ---- state ---------------------------------------------------------------
 
     var _listEl, _crumbEl, _bodyEl, _titleEl, _countEl, _pvTypeEl, _pvToolsEl, _filterEl, _pvEl, _pvCloseEl, _dlBtn, _wrapBtn, _rawBtn;
     var _createBtn, _renameBtn, _deleteBtn, _editBtn, _ownerBtn, _permBtn, _copyBtn, _moveBtn, _uploadBtn, _recycleBtn, _spaceBtn, _rootEl;
     var _editMode = false;      // false = preview only, true = editing allowed (header toggle)
     var _editable = false;      // the previewed file is small enough to edit
+    var _editNote = '';         // why Edit is off, shown on the button
     var _inFolder = false;      // a real folder is open (not the roots list)
     var _currentCrumbs = [];     // folder breadcrumb data, reused to append the open file
     var _hasManyRoots = false;
     var EMPTY_HTML = '';
     var _currentPath = '';
+    var _starEl = null, _favBtn = null, _favMenuEl = null;
     var _selectedFile = null;   // path of the file in the preview, used by Open raw
     var _selected = {};         // checkbox selection (path -> true); the file ops act on this
     var _previewFile = null;    // {path,cat,size,name,ext} of the file in the preview
@@ -247,7 +261,6 @@
     var _editMtime = 0;         // mtime the file had when opened, for the stale guard
     var _editCtx = null;        // file context to restore the read-only preview on exit
 
-    // ---- shared bits ---------------------------------------------------------
 
     function setLoading(target) {
         target.innerHTML =
@@ -293,9 +306,9 @@
         }
         _pvToolsEl.innerHTML = '';
         renderPathCrumbs(null);
-        markActive(null);
         _selectedFile = null;
         _previewFile = null;
+        markActive(null);
         _editable = false;
         resetEditState();
         setFileTools(false, false);
@@ -327,7 +340,6 @@
         return a;
     }
 
-    // ---- list rendering ------------------------------------------------------
 
     function buildCrumbsHtml(crumbs, hasManyRoots, fileName) {
         if (!crumbs || !crumbs.length) {
@@ -358,6 +370,25 @@
         renderPathCrumbs(null);
     }
 
+    // 2026.07.08 13:30, fixed width so the cell never resizes between rows
+    function fmtDate(ts) {
+        var d = new Date(ts * 1000);
+        var p = function (n) { return n < 10 ? '0' + n : String(n); };
+        return d.getFullYear() + '.' + p(d.getMonth() + 1) + '.' + p(d.getDate()) +
+               ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    }
+
+    // the line under a name. no type here, the icon already carries it
+    function itemSub(e) {
+        var pv = (_permsFmt === 'symbolic') ? (e.perms || '') : (e.mode || '');
+        var h  = '';
+        if (!e.is_dir) h += '<span class="fv-sub__cell">' + formatBytes(e.size) + '</span>';
+        if (e.owner)   h += '<span class="fv-sub__cell fv-sub__owner">' + esc(e.owner) + '</span>';
+        if (pv)        h += '<span class="fv-sub__cell">' + esc(pv) + '</span>';
+        if (e.mtime)   h += '<span class="fv-sub__cell">' + fmtDate(e.mtime) + '</span>';
+        return h;
+    }
+
     function renderList(data) {
         var entries = data.entries || [];
         _titleEl.textContent = data.root_picker ? 'Roots' : 'Contents';
@@ -380,7 +411,7 @@
                       (sel ? '<span class="fv-item__cb"></span>' : '') +
                       '<div class="fv-ico dir">' + FOLDER_SVG + '</div>' +
                       '<div class="fv-item__meta"><div class="fv-item__name">..</div>' +
-                      '<div class="fv-item__sub">Parent folder</div></div>' +
+                      '<div class="fv-item__sub"><span class="fv-sub__cell">Parent folder</span></div></div>' +
                     '</div>';
         }
 
@@ -388,12 +419,6 @@
             var e   = entries[i];
             var cat = e.is_dir ? 'dir' : (e.category || 'bin');
             var ico = e.is_dir ? FOLDER_SVG : fileIconSvg(cat, e.ext);
-            var base = e.is_dir ? 'Folder'
-                                : (formatBytes(e.size) + ' \u00b7 ' + (CAT_LABEL[cat] || 'File'));
-            var pv  = (_permsFmt === 'symbolic') ? (e.perms || '') : (e.mode || '');
-            var sub = base;
-            if (e.owner) sub += ' \u00b7 ' + esc(e.owner);
-            if (pv)      sub += ' \u00b7 ' + esc(pv);
 
             html += '<div class="fv-item"' +
                       ' data-dir="' + (e.is_dir ? '1' : '0') + '"' +
@@ -406,9 +431,15 @@
                       '<div class="fv-ico ' + (e.is_dir ? 'dir' : 'fv-ico--doc') + '">' + ico + '</div>' +
                       '<div class="fv-item__meta">' +
                         '<div class="fv-item__name">' + esc(e.name) + '</div>' +
-                        '<div class="fv-item__sub">' + sub + '</div>' +
+                        '<div class="fv-item__sub">' + itemSub(e) + '</div>' +
                       '</div>' +
                     '</div>';
+        }
+        // a folder past the cap must say so, otherwise a filter that finds nothing
+        // reads as "the file is not here" when it simply was not sent
+        if (data.truncated) {
+            html += '<div class="fv-list-note">Only the first ' + entries.length +
+                    ' items are shown. Use the filter on a narrower folder to see the rest.</div>';
         }
         _listEl.innerHTML = html;
         updateOps();
@@ -420,9 +451,10 @@
             items[i].classList.toggle('active',
                 items[i].getAttribute('data-path') === path && items[i].getAttribute('data-dir') === '0');
         }
+        // the star reads _previewFile, so callers set it before they get here
+        refreshStar();
     }
 
-    // ---- image preview -------------------------------------------------------
 
     function renderImage(path, name) {
         setPvHead(name, 'Image', 'img');
@@ -479,7 +511,6 @@
         setFileTools(false, true);
     }
 
-    // ---- media (audio, video) ------------------------------------------------
     // the browser plays what its codecs support. anything it cannot decode (often
     // MKV or H.265) falls back to the details card rather than a blank player.
 
@@ -516,7 +547,6 @@
         setFileTools(false, true);
     }
 
-    // ---- text, code and markdown ---------------------------------------------
 
     function truncatedBanner(d) {
         return d.truncated
@@ -574,7 +604,7 @@
         if (ext === 'csv' || ext === 'tsv') {
             addTool('Table', 'Show as a table', function () { renderCsv(d, path, name, ext); });
         }
-        setFileTools(true, true, (d.size || 0) <= _editMaxBytes);
+        setFileTools(true, true, (d.size || 0) <= _editMaxBytes, editNote(d.size));
     }
 
     function renderMarkdown(d, path, name) {
@@ -592,8 +622,9 @@
             var html;
             try { html = window.marked ? window.marked.parse(d.content) : ('<pre>' + esc(d.content) + '</pre>'); }
             catch (e) { html = '<pre>' + esc(d.content) + '</pre>'; }
-            // strip any script, event handlers or unsafe urls from the rendered html
-            if (window.DOMPurify) html = window.DOMPurify.sanitize(html);
+            // no sanitiser, no rendered html: the file decides what is in there
+            if (!window.DOMPurify) { _bodyEl.innerHTML = truncatedBanner(d) + '<pre class="fv-code wrap-on">' + esc(d.content) + '</pre>'; return; }
+            html = window.DOMPurify.sanitize(html);
             _bodyEl.innerHTML = truncatedBanner(d) + '<div class="fv-md">' + html + '</div>';
             highlightInside();
         }
@@ -617,10 +648,9 @@
             srcBtn.textContent = rendered ? 'View source' : 'View rendered';
             srcBtn.classList.toggle('active', !rendered);
         });
-        setFileTools(false, true, (d.size || 0) <= _editMaxBytes);
+        setFileTools(false, true, (d.size || 0) <= _editMaxBytes, editNote(d.size));
     }
 
-    // ---- metadata fallback card ----------------------------------------------
 
     function loadMeta(path, note) {
         markActive(path);
@@ -657,7 +687,6 @@
             '</div>';
     }
 
-    // ---- pdf and archive -----------------------------------------------------
 
     function renderPdf(path, name) {
         setPvHead(name, 'PDF', 'pdf');
@@ -705,10 +734,15 @@
         _bodyEl.innerHTML = head + html;
     }
 
-    // ---- navigation ----------------------------------------------------------
 
     function loadDir(path, fromInit) {
-        if (!leaveEditOk()) return Promise.resolve();
+        return new Promise(function (resolve) {
+            leaveEditOk(function () { resolve(loadDirNow(path, fromInit)); },
+                        function () { resolve(); });
+        });
+    }
+
+    function loadDirNow(path, fromInit) {
         _currentPath = path || '';
         clearPreview();
         clearFilter();
@@ -732,10 +766,8 @@
         });
     }
 
-    // ---- wiring --------------------------------------------------------------
 
     // dispatch a file to the right preview once it is cleared to be read
-    // ---- rich previews -------------------------------------------------------
 
     function renderCsv(d, path, name, ext) {
         setPvHead(name, (ext ? '.' + ext : 'CSV'), 'code');
@@ -897,8 +929,8 @@
         Promise.all([loadLib('mammoth.browser.min.js'), fetchBytes(path)]).then(function (res) {
             return window.mammoth.convertToHtml({ arrayBuffer: res[1] });
         }).then(function (out) {
-            var html = (out && out.value) || '';
-            if (window.DOMPurify) html = window.DOMPurify.sanitize(html);
+            if (!window.DOMPurify) { _bodyEl.innerHTML = errorBox('The sanitiser did not load, so this document cannot be shown.'); return; }
+            var html = window.DOMPurify.sanitize((out && out.value) || '');
             _bodyEl.innerHTML = '<div class="fv-doc">' + html + '</div>';
         }).catch(function () { _bodyEl.innerHTML = errorBox('Could not render this document.'); });
     }
@@ -914,9 +946,9 @@
             for (var i = 0; i < names.length; i++) tabs += '<button type="button" class="fv-sheet__tab' + (i === 0 ? ' active' : '') + '" data-sheet="' + esc(names[i]) + '">' + esc(names[i]) + '</button>';
             _bodyEl.innerHTML = '<div class="fv-sheet"><div class="fv-sheet__tabs">' + tabs + '</div><div class="fv-tablewrap" id="fv-sheet-view"></div></div>';
             function show(n) {
-                var html = window.XLSX.utils.sheet_to_html(wb.Sheets[n], { editable: false });
-                if (window.DOMPurify) html = window.DOMPurify.sanitize(html);
-                document.getElementById('fv-sheet-view').innerHTML = html;
+                var view = document.getElementById('fv-sheet-view');
+                if (!window.DOMPurify) { view.innerHTML = errorBox('The sanitiser did not load, so this sheet cannot be shown.'); return; }
+                view.innerHTML = window.DOMPurify.sanitize(window.XLSX.utils.sheet_to_html(wb.Sheets[n], { editable: false }));
             }
             var tabsEl = _bodyEl.querySelectorAll('.fv-sheet__tab');
             for (var j = 0; j < tabsEl.length; j++) {
@@ -991,16 +1023,19 @@
     }
 
     function openFile(item) {
-        if (!leaveEditOk()) return;
+        leaveEditOk(function () { openFileNow(item); });
+    }
+
+    function openFileNow(item) {
         var path = item.getAttribute('data-path');
         var cat  = item.getAttribute('data-cat') || 'bin';
         var size = Number(item.getAttribute('data-size') || '0');
         var name = item.getAttribute('data-name') || '';
         var ext  = item.getAttribute('data-ext') || '';
 
-        markActive(path);
         _selectedFile = path;
         _previewFile = { path: path, cat: cat, size: size, name: name, ext: ext };
+        markActive(path);
         _editable = false;          // a renderer flips this on for editable text
         refreshEditBtn();
         updateOps();                // download on, folder-add off while a file is open
@@ -1016,16 +1051,23 @@
                         || (cat === 'font'   && size > 0 && size <= _fontMaxBytes));
 
         if (!willRead) {
-            var capped = (cat === 'img' || cat === 'doc'
-                          || cat === 'sheet' || cat === 'ebook' || cat === 'font');
-            loadMeta(path, (capped && size > 0) ? 'This file is larger than the preview limit.' : '');
+            // naming the limit that applied, otherwise it points at no setting the
+            // user can find and reads like the file is at fault
+            var caps = { img:   [_imgMaxBytes,   'images'],
+                         doc:   [_docMaxBytes,   'documents'],
+                         sheet: [_docMaxBytes,   'spreadsheets'],
+                         ebook: [_ebookMaxBytes, 'e-books'],
+                         font:  [_fontMaxBytes,  'fonts'] };
+            var cap = caps[cat];
+            loadMeta(path, (cap && size > 0)
+                ? 'This file is over the ' + formatBytes(cap[0]) + ' preview limit for ' + cap[1] + '.'
+                : '');
             return;
         }
 
         doOpen(cat, size, name, ext, path);
     }
 
-    // ---- filter, refresh and keyboard ----------------------------------------
 
     function clearFilter() {
         if (_filterEl && _filterEl.value !== '') _filterEl.value = '';
@@ -1050,7 +1092,7 @@
             var trunc = (_listEl.getAttribute('data-trunc') === '1');
             _countEl.textContent = (q === '')
                 ? (total ? (total + (trunc ? '+' : '') + ' items') : '')
-                : (shown + ' of ' + total);
+                : (shown + ' of ' + total + (trunc ? '+' : ''));
         }
     }
 
@@ -1098,6 +1140,7 @@
             }
         } else if (e.key === 'Escape') {
             if (_filterEl && _filterEl.value !== '') { clearFilter(); applyFilter(); }
+            else if (_previewFile) leaveEditOk(clearPreview);
         }
     }
 
@@ -1106,6 +1149,12 @@
         var item = ev.target.closest ? ev.target.closest('.fv-item') : null;
         if (!item) return;
         if (item.getAttribute('data-dir') === '1') { loadDir(item.getAttribute('data-path')); return; }
+        // clicking the open row again is how people undo the click, the X in the
+        // other pane is the only other way out and nobody finds it
+        if (_previewFile && _previewFile.path === item.getAttribute('data-path')) {
+            leaveEditOk(clearPreview);
+            return;
+        }
         openFile(item);
     }
 
@@ -1116,7 +1165,6 @@
         loadDir(a.getAttribute('data-path') || '');
     }
 
-    // ---- list selection (checkboxes) -----------------------------------------
     // the toolbar file ops act on the ticked rows, not on what is previewed. a
     // new listing clears the selection (renderList resets _selected).
 
@@ -1131,10 +1179,6 @@
         return !!row && row.getAttribute('data-dir') === '0';
     }
 
-    // enablement rules:
-    //  - download is read-only: a previewed file or a single ticked file, in either mode
-    //  - rename/move/copy/owner/permission/delete are writes: edit mode + a ticked selection
-    //  - create/upload add to the folder: edit mode, inside a folder, with no file open
     function updateOps() {
         var n = selCount();
         var hasPv = !!(_previewFile && _previewFile.path);
@@ -1146,7 +1190,7 @@
         if (_permBtn)   _permBtn.disabled   = !(w && n >= 1);
         if (_copyBtn)   _copyBtn.disabled   = !(w && n >= 1);
         if (_moveBtn)   _moveBtn.disabled   = !(w && n >= 1);
-        var add = w && _inFolder && !hasPv;
+        var add = w && _inFolder;
         if (_createBtn) _createBtn.disabled = !add;
         if (_uploadBtn) _uploadBtn.disabled = !add;
         if (_recycleBtn) _recycleBtn.disabled = !w;
@@ -1211,17 +1255,21 @@
         }
     }
 
-    // ---- modal dialogs --------------------------------------------------------
     // one small overlay built on demand, shared by create, rename and delete.
     // esc cancels, enter confirms, a click on the backdrop cancels. it carries
     // the light-theme class itself since it lives on the body, outside the wrapper.
 
     var _modal = null;
 
+    var _modalOnClose = null;   // fires when a modal goes away without its OK
+
     function modalClose() {
         if (_modal && _modal.parentNode) _modal.parentNode.removeChild(_modal);
         _modal = null;
         document.removeEventListener('keydown', modalKey, true);
+        var cb = _modalOnClose;
+        _modalOnClose = null;
+        if (cb) cb();
     }
     function modalKey(e) {
         if (!_modal) return;
@@ -1237,7 +1285,8 @@
     function modalOpen(title, inner, okLabel, okClass, onOk, okOnly) {
         modalClose();
         var ov = document.createElement('div');
-        ov.className = 'fv-modal' + (_cfg.lightTheme ? ' fv-light' : '');
+        ov.className = 'fv-modal' + (_cfg.lightTheme ? ' fv-light' : '') +
+                       (_cfg.theme ? ' fv-theme-' + _cfg.theme : '');
         ov.innerHTML =
             '<div class="fv-modal__panel" role="dialog" aria-modal="true">' +
               '<div class="fv-modal__head">' + esc(title) + '</div>' +
@@ -1269,7 +1318,98 @@
         if (ok) ok.disabled = !!on;
     }
 
-    // ---- file operations (phase 1) -------------------------------------------
+
+    // the star pins whatever the crumbs point at, a file when one is open and the
+    // folder otherwise. the menu shows names only, the full path is the tooltip.
+
+    var _favs    = [];      // [{path, name, is_dir}]
+    var _favOpen = false;
+
+    function favTarget() {
+        return (_previewFile && _previewFile.path) ? _previewFile.path : _currentPath;
+    }
+
+    function favHas(path) {
+        for (var i = 0; i < _favs.length; i++) if (_favs[i].path === path) return true;
+        return false;
+    }
+
+    function refreshStar() {
+        if (!_starEl) return;
+        var t = favTarget();
+        var on = !!t && favHas(t);
+        _starEl.disabled = !t;
+        _starEl.setAttribute('aria-pressed', on ? 'true' : 'false');
+        _starEl.title = !t ? 'Favourites'
+                           : (on ? 'Remove from favourites' : 'Add to favourites');
+    }
+
+    function favLoad() {
+        return fetchJson('fav_list', '').then(function (d) {
+            if (d && d.ok) { _favs = d.entries || []; refreshStar(); }
+        }).catch(function () {});
+    }
+
+    function favToggle() {
+        var t = favTarget();
+        if (!t) return;
+        postJson('fav_toggle', { path: t }).then(function (d) {
+            if (!d || !d.ok) { noteModal('Favourites', esc((d && d.error) || 'could not save')); return; }
+            _favs = d.entries || [];
+            refreshStar();
+            if (_favOpen) favRender();
+        });
+    }
+
+    function favRender() {
+        if (!_favMenuEl) return;
+        if (!_favs.length) {
+            _favMenuEl.innerHTML = '<div class="fv-fav-empty">No favourites yet</div>';
+            return;
+        }
+        var h = '';
+        for (var i = 0; i < _favs.length; i++) {
+            var f = _favs[i];
+            h += '<button type="button" class="fv-fav-item" role="menuitem" data-path="' + esc(f.path) + '"' +
+                 ' title="' + esc(f.path) + '">' +
+                 '<span class="fv-fav-item__ico">' + (f.is_dir ? FOLDER_SVG : FILE_SVG) + '</span>' +
+                 '<span class="fv-fav-item__name">' + esc(f.name) + '</span></button>';
+        }
+        _favMenuEl.innerHTML = h;
+    }
+
+    function favMenuClose() {
+        _favOpen = false;
+        if (_favMenuEl) _favMenuEl.hidden = true;
+        if (_favBtn) _favBtn.setAttribute('aria-expanded', 'false');
+    }
+
+    function favMenuToggle() {
+        if (_favOpen) { favMenuClose(); return; }
+        // the list is re-read on open, so a folder deleted elsewhere drops out here
+        favLoad().then(function () {
+            favRender();
+            _favOpen = true;
+            if (_favMenuEl) _favMenuEl.hidden = false;
+            if (_favBtn) _favBtn.setAttribute('aria-expanded', 'true');
+        });
+    }
+
+    function favGo(path) {
+        favMenuClose();
+        var f = null;
+        for (var i = 0; i < _favs.length; i++) if (_favs[i].path === path) f = _favs[i];
+        if (!f) return;
+        if (f.is_dir) { loadDir(path); return; }
+
+        // a file favourite lands in its folder and opens straight away
+        var parent = path.replace(/\/[^/]+$/, '');
+        loadDir(parent).then(function () {
+            var row = findRow(path);
+            if (row) openFile(row);
+        });
+    }
+
 
     function baseName(p) {
         var s = String(p || '').replace(/\/+$/, '');
@@ -1285,6 +1425,27 @@
     }
     function opMsg(label, d) { return (d && d.error) ? (label + ': ' + d.error) : (label + ' failed.'); }
 
+    // owner and mode are part of the row, so a chmod or a chown leaves the list
+    // lying. rewrite those rows only: the ticks, the scroll position and an open
+    // preview all survive, which a full reload would not
+    function refreshRows(paths) {
+        if (!_currentPath || !paths || !paths.length) return;
+        var want = {};
+        for (var i = 0; i < paths.length; i++) want[paths[i]] = true;
+
+        fetchJson('list', 'path=' + encodeURIComponent(_currentPath)).then(function (d) {
+            if (!d || !d.ok) return;
+            var entries = d.entries || [];
+            for (var j = 0; j < entries.length; j++) {
+                var e = entries[j];
+                if (!want[e.path]) continue;
+                var row = findRow(e.path);
+                var sub = row ? row.querySelector('.fv-item__sub') : null;
+                if (sub) sub.innerHTML = itemSub(e);
+            }
+        }).catch(function () {});
+    }
+
     // reload the open folder, then highlight an item by path if asked
     function refreshAfter(selectPath) {
         return loadDir(_currentPath).then(function () {
@@ -1294,7 +1455,6 @@
         });
     }
 
-    // create a file or folder in the folder currently open
     function promptCreate() {
         if (!_currentPath) return;
         var inner =
@@ -1347,7 +1507,7 @@
     }
 
     // permanent delete of the ticked set, behind a confirm. items go one by one
-    // through the single-path endpoint; the bulk/background path is phase 4. the
+    // through the single-path endpoint, the bulk path goes to the worker. the
     // trash mode rides on the same call once the recycle bin exists.
     function promptDelete() {
         var paths = selectedPaths();
@@ -1365,7 +1525,7 @@
             '<div class="fv-modal__err" style="display:none"></div>';
         modalOpen('Delete', inner, 'Delete', 'fv-btn--danger', function (ov) {
             modalBusy(ov, true);
-            postJson('delete', { paths: JSON.stringify(paths), mode: _recycleOn ? 'trash' : 'permanent' }).then(function (d) {
+            postJson('delete', { paths: JSON.stringify(paths) }).then(function (d) {
                 modalClose();
                 clearPreview();
                 refreshAfter(null).then(function () {
@@ -1381,13 +1541,6 @@
         });
     }
 
-    // ---- upload (phase 5) -----------------------------------------------------
-    // upload into the current folder, one file at a time, each split into chunks
-    // so a large file never hits a php size limit. each chunk is base64 encoded and
-    // sent in a normal form post (the same transport the rest of the webgui and the
-    // official file manager use), which is reliable through unraid's nginx and fpm.
-    // progress is per file plus an overall count; cancel aborts the chunk in flight
-    // and drops the half-staged file.
 
     var UPLOAD_CHUNK = 1024 * 1024;   // 1 MiB raw per chunk (base64 grows it ~1.4x)
     var UPLOAD_PARALLEL = 4;          // files uploaded at once - under the browser's 6-conn cap, leaves room for the rest of the gui
@@ -1398,7 +1551,6 @@
         return s;
     }
 
-    // ---- upload (lives in the preview pane, no popup) ------------------------
     // pick or drop files, or a whole folder, then a small pool uploads several
     // files at once, each with its own bar. a file is sent in base64 chunks over a
     // plain form post (the transport the official file manager uses), which is
@@ -1421,13 +1573,16 @@
 
     function enterUploadMode() {
         if (!_currentPath) return;             // the roots view has no target folder
-        if (!leaveEditOk()) return;
+        leaveEditOk(function () { enterUploadModeNow(); });
+    }
+
+    function enterUploadModeNow() {
         resetPaneModes();
         _uploadMode = true;
         if (_pvEl) _pvEl.classList.add('fv-preview--active');
         renderPathCrumbs(null);
-        markActive(null);
         _selectedFile = null; _previewFile = null;
+        markActive(null);
         if (_pvToolsEl) _pvToolsEl.innerHTML = '';
         setFileTools(false, false);
         renderUploadIdle();
@@ -1683,7 +1838,6 @@
         step();
     }
 
-    // ---- space usage view (phase 7) -------------------------------------------
     // ranks what a folder holds by allocated disk space. the scan runs as a
     // detached worker job started with space_start; the pane polls job_status and
     // can cancel it. clicking a folder row drills in: navigate there, scan again.
@@ -1705,8 +1859,7 @@
 
     function enterSpaceMode() {
         if (!_currentPath) return;
-        if (!leaveEditOk()) return;
-        startSpaceScan(_currentPath, true);
+        leaveEditOk(function () { startSpaceScan(_currentPath, true); });
     }
 
     function startSpaceScan(path, takeover) {
@@ -1717,8 +1870,8 @@
         if (_pvEl) _pvEl.classList.add('fv-preview--active');
         if (takeover) {
             renderPathCrumbs(null);
-            markActive(null);
             _selectedFile = null; _previewFile = null;
+            markActive(null);
             if (_pvToolsEl) _pvToolsEl.innerHTML = '';
             setFileTools(false, false);
         }
@@ -1840,11 +1993,8 @@
             '<div class="fv-sp-line fv-sp-warn">' + esc(msg) + '</div></div>';
     }
 
-    // ---- recycle bin view (phase 6) -------------------------------------------
-    // takes over the preview pane like the uploader. events list newest first,
-    // each with restore and a permanent delete, plus an empty for the whole
-    // scope and a this share / all shares toggle. opening quietly purges the
-    // expired events first so the list never shows rows about to vanish.
+    // opening purges the expired events first, so the list never shows rows that
+    // are about to vanish on their own
 
     var _recycleMode = false;
     var _rbScope = 'share';
@@ -1873,14 +2023,17 @@
     var RB_TRASH_SVG  = '<svg width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg>';
 
     function enterRecycleMode() {
-        if (!leaveEditOk()) return;
+        leaveEditOk(function () { enterRecycleModeNow(); });
+    }
+
+    function enterRecycleModeNow() {
         resetPaneModes();
         _recycleMode = true;
         _rbScope = rbShareOk() ? 'share' : 'all';
         if (_pvEl) _pvEl.classList.add('fv-preview--active');
         renderPathCrumbs(null);
-        markActive(null);
         _selectedFile = null; _previewFile = null;
+        markActive(null);
         if (_pvToolsEl) _pvToolsEl.innerHTML = '';
         setFileTools(false, false);
         _bodyEl.innerHTML = '<div class="fv-rbpanel"><div class="fv-rb-loading">Loading the recycle bin\u2026</div></div>';
@@ -2040,7 +2193,6 @@
             });
     }
 
-    // ---- copy / move (phase 4) -----------------------------------------------
     // copy or move the ticked items into a folder chosen with a picker, then watch
     // a background job. a same-fs move is instant; copies and cross-fs moves stream
     // with a progress bar and can be cancelled.
@@ -2180,18 +2332,18 @@
         poll();
     }
 
-    // ---- owner and permission (phase 3) --------------------------------------
     // both act on the ticked set. the dialog seeds from the first selected item,
     // then the chosen values are applied to each one in turn.
 
-    // run an action over every path, collect failures, report. no list refresh:
-    // owner and mode are not shown in the list, so the selection is kept and you
-    // can chain owner then permission on the same items.
+    // run an action over every path, collect failures, report, then bring the
+    // rows up to date. the selection stays, so you can chain owner then
+    // permission on the same items.
     function applyToEach(action, paths, paramsFor, label) {
         var failed = [];
         (function next(i) {
             if (i >= paths.length) {
                 modalClose();
+                refreshRows(paths);
                 if (failed.length) {
                     noteModal(label, '<p class="fv-confirm">Some items were not changed:</p>' +
                         '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + failed.map(esc).join('<br>') + '</p>');
@@ -2312,7 +2464,6 @@
         ov.querySelector('#fv-own-user').focus();
     }
 
-    // ---- edit mode (phase 2) -------------------------------------------------
     // turn the read-only text preview into a textarea, save atomically with a
     // stale guard, and restore the preview when done.
 
@@ -2326,14 +2477,17 @@
         var ta = document.getElementById('fv-editor');
         return _editing && !!ta && ta.value !== _editBaseline;
     }
-    // navigation guard: true when it is safe to leave the editor. a clean editor
-    // leaves quietly, a dirty one asks first. a native confirm is used here since
-    // the caller needs a synchronous answer before it navigates.
-    function leaveEditOk() {
-        if (!_editing) return true;
-        if (!editorDirty()) { resetEditState(); return true; }
-        if (window.confirm('Discard unsaved changes?')) { resetEditState(); return true; }
-        return false;
+    // the answer comes from a modal, so callers hand in what they wanted to do next
+    function leaveEditOk(onOk, onCancel) {
+        if (!_editing)      { onOk(); return; }
+        if (!editorDirty()) { resetEditState(); onOk(); return; }
+
+        var done = false;
+        _modalOnClose = function () { if (!done) { done = true; if (onCancel) onCancel(); } };
+        modalOpen('Unsaved changes',
+            '<p class="fv-confirm">This file has changes that were not saved. Leaving now discards them.</p>',
+            'Discard', 'fv-btn--danger',
+            function () { done = true; modalClose(); resetEditState(); onOk(); });
     }
 
     // load the full file (not the capped preview) and open it in the editor
@@ -2422,6 +2576,9 @@
         _pvEl      = document.querySelector('.fv-preview');
         _rootEl    = document.querySelector('.fv-wrapper');
         _pvCloseEl = document.getElementById('fv-pv-close');
+        _starEl    = document.getElementById('fv-pv-star');
+        _favBtn    = document.getElementById('fv-op-fav');
+        _favMenuEl = document.getElementById('fv-fav-menu');
         _dlBtn     = document.getElementById('fv-op-download');
         _wrapBtn   = document.getElementById('fv-op-wrap');
         _rawBtn    = document.getElementById('fv-op-openraw');
@@ -2441,7 +2598,20 @@
 
         _listEl.addEventListener('click', onListClick);
         _crumbEl.addEventListener('click', onCrumbClick);
-        if (_pvCloseEl) _pvCloseEl.addEventListener('click', function () { if (leaveEditOk()) clearPreview(); });
+        if (_pvCloseEl) _pvCloseEl.addEventListener('click', function () { leaveEditOk(clearPreview); });
+        if (_starEl) _starEl.addEventListener('click', favToggle);
+        if (_favBtn) _favBtn.addEventListener('click', function (e) { e.stopPropagation(); favMenuToggle(); });
+        if (_favMenuEl) _favMenuEl.addEventListener('click', function (e) {
+            var b = e.target.closest ? e.target.closest('.fv-fav-item') : null;
+            if (b) favGo(b.getAttribute('data-path'));
+        });
+        // any click outside closes it, the same way a menu is expected to behave
+        document.addEventListener('click', function (e) {
+            if (!_favOpen) return;
+            if (_favMenuEl && _favMenuEl.contains(e.target)) return;
+            if (_favBtn && _favBtn.contains(e.target)) return;
+            favMenuClose();
+        });
         if (_dlBtn) _dlBtn.addEventListener('click', downloadSelected);
         if (_wrapBtn) _wrapBtn.addEventListener('click', toggleWrap);
         if (_rawBtn) _rawBtn.addEventListener('click', openRawSelected);
@@ -2465,6 +2635,7 @@
         document.addEventListener('keydown', onKey);
 
         setMode(false);   // start in preview-only
+        favLoad();
         loadDir(readDir(), true);
     }
 

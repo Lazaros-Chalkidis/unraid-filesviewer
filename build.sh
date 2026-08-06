@@ -36,6 +36,20 @@ if [[ "$STAGE_INPUT" == "local" ]]; then
     STAGE_INPUT=""
 fi
 
+# the version becomes an XML entity in the plg, so nothing arbitrary gets in
+if [[ ! "$LETTER_SUFFIX" =~ ^[a-z]?$ ]]; then
+    echo "Version suffix must be a single lowercase letter."
+    exit 1
+fi
+if [[ ! "$STAGE_INPUT" =~ ^(dev|release)?$ ]]; then
+    echo "Stage must be dev or release."
+    exit 1
+fi
+if [[ ! "$LOCAL_INSTALL" =~ ^(local)?$ ]]; then
+    echo "Third argument can only be local."
+    exit 1
+fi
+
 STAGE_SUFFIX=""
 if [[ -n "$STAGE_INPUT" && "$STAGE_INPUT" != "release" ]]; then
     STAGE_SUFFIX="-${STAGE_INPUT}"
@@ -64,6 +78,20 @@ if [[ -f "$CHANGELOG_MD_FILE" ]]; then
 else
     CHANGES_BLOCK="### ${VERSION}
 ${CHANGES_TEXT}"
+fi
+
+# a ]]> here closes the CDATA and whatever follows becomes plg markup that Unraid
+# runs as root on every machine that installs
+if [[ "$CHANGES_BLOCK" == *"]]>"* ]]; then
+    CHANGES_BLOCK="${CHANGES_BLOCK//]]>/]] >}"
+    echo "Note: a ]]> in ${CHANGELOG_MD_FILE} was broken up before going into the plg."
+fi
+
+# a release that does not match the top changelog entry ships the wrong notes
+CHANGELOG_TOP="$(grep -m1 -oE '^## Version [0-9]{4}\.[0-9]{2}\.[0-9]{2}[a-z]?' "$CHANGELOG_MD_FILE" 2>/dev/null | awk '{print $3}')"
+if [[ "$BRANCH" == "main" && "$CHANGELOG_TOP" != "${BASE_VERSION}${LETTER_SUFFIX}" ]]; then
+    echo "CHANGELOG.md top entry is ${CHANGELOG_TOP:-missing}, this build is ${BASE_VERSION}${LETTER_SUFFIX}."
+    exit 1
 fi
 
 # Build
@@ -135,14 +163,27 @@ FV_FOLDERS_FIRST="1"
 FV_REMEMBER="1"
 FV_SORT="name"
 FV_SORT_DIR="asc"
+FV_PERMS_FORMAT="octal"
 FV_TEXT_CAP_KB="2048"
 FV_MD_RENDER="1"
+FV_BTN_COLORS="1"
+FV_SPACE="0"
 FV_IMG_MAX_MB="50"
 FV_ARCHIVE_MAX="1000"
 FV_AUTOPLAY="0"
-FV_RECYCLE="1"
+FV_RECYCLE="0"
 FV_RECYCLE_DAYS="30"
 CFGEOF
+
+# a settings key missing from here never reaches a fresh install
+CFG_MISSING=""
+for K in $(grep -o "new_cfg\['FV_[A-Z_]*'\]" source/FilesViewerSettings.page | grep -o "FV_[A-Z_]*" | sort -u); do
+    grep -q "^${K}=" <<< "$DEFAULT_CFG" || CFG_MISSING="${CFG_MISSING} ${K}"
+done
+if [[ -n "$CFG_MISSING" ]]; then
+    echo "Default config is missing:${CFG_MISSING}"
+    exit 1
+fi
 
 # Shared PLG sections
 PLG_DESCRIPTION="A file browser and manager. Previews files and manages daily tasks. Deletes files to a recycle bin per share."
@@ -175,6 +216,15 @@ if [[ -f "$BAK" ]]; then
     rm -f "$BAK"
 fi
 
+# Daily sweep of expired recycle bin events. dcron reads only the root crontab, so
+# the drop-in has to be merged in by Unraid. /etc is tmpfs, and the plg runs again
+# on every boot, which is what puts the file back.
+cp -f /usr/local/emhttp/plugins/&name;/&name;.cron /etc/cron.d/&name;
+chmod 644 /etc/cron.d/&name;
+if [[ -x /usr/local/sbin/update_cron ]]; then
+    /usr/local/sbin/update_cron
+fi
+
 # The bin is for this UI only: a managed block in smb-extra.conf vetoes the
 # folder on every share. Prepended, because the file is included inside [global]
 # and lines after a user [section] would stop being global.
@@ -204,14 +254,17 @@ echo " Settings: Settings > Files Viewer"
 echo "----------------------------------------------------"
 echo ""'
 
-PLG_REMOVE_SCRIPT='# With the bin enabled an uninstall also empties every bin, nothing hides on
-# the shares. A missing key means the default, on. Runs before the config rm.
-FVCFG=/boot/config/plugins/&name;/&name;.cfg
-FVPURGE=1
-if grep -q ^FV_RECYCLE=.0 "$FVCFG" 2>/dev/null; then FVPURGE=0; fi
-if [[ "$FVPURGE" == "1" ]]; then
-    rm -rf /mnt/*/*/.RecycleBin
+PLG_REMOVE_SCRIPT='rm -f /etc/cron.d/&name;
+if [[ -x /usr/local/sbin/update_cron ]]; then
+    /usr/local/sbin/update_cron
 fi
+
+# Removing a plugin is one click with no confirmation and it is usually a
+# reinstall, so nothing the user put there is ours to delete. Counted before the
+# veto goes, only to decide whether the closing text mentions the bins at all.
+shopt -s nullglob
+FVBINS=(/mnt/*/*/.RecycleBin)
+shopt -u nullglob
 
 # Drop the managed Samba block and let Samba reread its config.
 sed -i "/FILESVIEWER RECYCLE BEGIN/,/FILESVIEWER RECYCLE END/d" /boot/config/smb-extra.conf 2>/dev/null
@@ -219,11 +272,28 @@ smbcontrol all reload-config >/dev/null 2>/dev/null
 
 removepkg &name;-&version;
 rm -rf /usr/local/emhttp/plugins/&name;
-rm -rf /boot/config/plugins/&name;
+rm -rf /tmp/&name;
+rm -f /var/log/&name;.log
+
+# On the boot device only our own files go, the cfg holds the user settings
+rm -f /boot/config/plugins/&name;/&name;-*.txz /boot/config/plugins/&name;/&name;-*.txz.b64 /boot/config/plugins/&name;/&name;.cfg.bak
+rmdir /boot/config/plugins/&name; 2>/dev/null
 
 echo ""
 echo "----------------------------------------------------"
 echo " &name; has been removed."
+echo ""
+echo " Your settings were left in place:"
+echo "   /boot/config/plugins/&name;/&name;.cfg"
+if (( ${#FVBINS[@]} )); then
+    echo ""
+    echo " The recycle bins were left as they are, with everything"
+    echo " still in them, and a reinstall picks them up. To see"
+    echo " what they hold:"
+    echo "   du -sh /mnt/*/*/.RecycleBin"
+    echo " To erase them for good:"
+    echo "   rm -rf /mnt/*/*/.RecycleBin"
+fi
 echo "----------------------------------------------------"
 echo ""'
 

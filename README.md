@@ -1,11 +1,12 @@
 # Files Viewer for Unraid
 
-Browse your Unraid shares and disks from a page under Tools, preview files in place, and manage them without leaving the browser. Deletes land in a per-share recycle bin instead of vanishing.
+Browse your Unraid shares and disks from a page under Tools, preview files in place, and manage them without leaving the browser. Turn on the recycle bin and deletes land in a per-share bin instead of vanishing.
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/Lazaros-Chalkidis/unraid-filesviewer?label=Latest%20Version&color=blue" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/last-commit/Lazaros-Chalkidis/unraid-filesviewer?label=Last%20Update" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/issues/Lazaros-Chalkidis/unraid-filesviewer?label=Issues" style="margin: 4px;" />&nbsp;
+  <img src="https://img.shields.io/github/downloads/Lazaros-Chalkidis/unraid-filesviewer/total?label=Downloads&color=brightgreen" style="margin: 4px;" />&nbsp;
   <img src="https://img.shields.io/github/license/Lazaros-Chalkidis/unraid-filesviewer?label=License" style="margin: 4px;" />
 </p>
 
@@ -25,7 +26,7 @@ It previews the common types in place: images, text and code with syntax highlig
 - Background jobs: Long copies, moves, and deletes run in a worker with live progress and a cancel button, so the page never hangs
 - Recycle bin: Deletes made in Files Viewer move to a per-share bin, with restore and purge in a bin view and a daily auto-empty (30 or 60 days, or never)
 - Bin off the network: The bin is reachable from this page alone. Samba vetoes the folder on every share and it is root-only on disk, which covers NFS as well
-- Space analysis: Rank everything inside a folder by the space it actually takes, with progress while it counts and drill-in on the results
+- Space analysis: Rank everything inside a folder by the space it actually takes, with drill-in on the results. It reads every file underneath, which on a share with hundreds of thousands of files runs for many minutes, so the button is hidden until you turn it on in the settings
 - Audit log: Every write is appended to /var/log/filesviewer.log with the time, the action, and the paths involved
 - Image preview: View images inline, fitted or at actual size with drag to pan, up to a configurable size limit
 - Text and code preview: Read text and code with syntax highlighting, long lines wrapped by default with a toggle, capped so large files stay responsive
@@ -40,16 +41,17 @@ It previews the common types in place: images, text and code with syntax highlig
 - E-book preview: Read .epub books in place with previous and next
 - Light on the page: The richer previews load their viewer only the first time one is needed, and each has its own size limit
 - Disk friendly browsing: Listing folders reads directory entries and metadata only, so browsing never wakes a sleeping disk. Opening a file reads its content, which wakes the disk that holds it
+- Favourites: Pin any folder or single file with the star in the preview header and jump straight back to it from the Favourites button. They live on the flash drive, so they follow you to any browser, and anything you delete drops off the list on its own
 - Breadcrumb navigation: Click any part of the path to jump back up, with an Up row inside each folder
 - Folder-aware sorting: Sort by name, size, or modified time, ascending or descending, with folders kept first if you want
 - Quick filter and keyboard: Type to filter the current folder by name, move with the arrow keys, and open with Enter
 - Remembers your place: Reopens at the folder you were last browsing, which you can turn off
-- Theme-aware: Inherits the active Unraid theme (light or dark) without override hacks
+- Theme-aware: Follows the active Unraid theme, with its own palette for each of Black, White, Azure and Gray rather than one light and one dark
 - Settings Page: Standalone settings at Settings > Files Viewer with browser-native form submission
 
 ## Scope and limits
 
-Files Viewer works inside /mnt and nowhere else, reading and writing alike. Every path is resolved and checked on the server before anything happens, and every write is logged. The recycle bin only catches deletes made in Files Viewer; deletions over SMB or by other tools bypass it, and turning the bin off makes deletes permanent. Most rich formats are parsed in the browser from the file's own bytes; SQLite is the exception and is opened read-only on the server. Listing for 7z and rar is not included, since those need extra tools that are not assumed to be present; those files show their details with a download instead. Video that uses a container or codec the browser cannot decode (for example MKV or H.265) also falls back to details.
+Files Viewer works inside /mnt and nowhere else, reading and writing alike. The mount points themselves, /mnt/user, the pools and the disks, can be browsed and copied but not renamed, moved or deleted, since removing one would empty everything it holds. A folder with more items than the listing carries shows the first few thousand and says so at the bottom of the list. Every path is resolved and checked on the server before anything happens, and every write is logged. The recycle bin only catches deletes made in Files Viewer; deletions over SMB or by other tools bypass it, and turning the bin off makes deletes permanent. Most rich formats are parsed in the browser from the file's own bytes; SQLite is the exception and is opened read-only on the server. Listing for 7z and rar is not included, since those need extra tools that are not assumed to be present; those files show their details with a download instead. Video that uses a container or codec the browser cannot decode (for example MKV or H.265) also falls back to details.
 
 
 **Tool page Screenshots**
@@ -82,6 +84,10 @@ Files Viewer works inside /mnt and nowhere else, reading and writing alike. Ever
 
 After installing, open Tools > Files Viewer. Tune the behaviour under Settings > Files Viewer.
 
+**Removing it**
+
+Removing the plugin leaves your settings and your recycle bins where they are, so reinstalling picks up exactly where you left off. If you want the bins gone as well, the uninstall prints the command to do it.
+
 ## Settings
 
 **Settings > Files Viewer**
@@ -96,17 +102,23 @@ After installing, open Tools > Files Viewer. Tune the behaviour under Settings >
 - Direction: Ascending or Descending
 - Permissions format: Show permissions as octal (750) or symbolic (drwxr-xr-x)
 
+**Appearance**
+- Action buttons: Coloured keeps a different colour for each button in the bar, Plain drops the colours. Delete and Recycle Bin stay coloured either way
+
 **Preview**
 - Render markdown: Show .md files formatted, or off to show the raw source
-- Text preview limit: How much of a text or code file to load (default 2 MB)
+- Text preview limit: How much of a text or code file to load (default 2 MB). Editing is separate and always stops at 2 MB, whatever this is set to
 - Inline image limit: Images larger than this show their details instead of loading inline (default 50 MB)
 - Archive listing limit: Maximum number of entries listed inside an archive (default 1000)
 
 **Media**
 - Autoplay media: Start audio and video automatically when opened (off by default)
 
+**Space analysis**
+- Space button: Show or hide the Space button (hidden by default). The scan reads every file under the folder you point it at, which runs for many minutes on a large share
+
 **Recycle bin**
-- Recycle bin: Deletes made in Files Viewer move to a per-share recycle bin; off deletes permanently (on by default)
+- Recycle bin: Deletes made in Files Viewer move to a per-share recycle bin; off deletes permanently (off by default)
 - Auto empty: Drop items older than 30 or 60 days, or keep everything until you empty the bin yourself
 
 **Settings Screenshot**
@@ -121,9 +133,9 @@ Every path the plugin is asked to open is resolved with `realpath` and then chec
 
 Listing and the details card only ever read: they list entries and read file metadata with `stat`, which does not wake a sleeping disk. The detected type comes from a fixed extension map, never from the file content, and responses are sent with `X-Content-Type-Options: nosniff`. Access is gated by the Unraid session like every other plugin page, with the CSRF token carried on each request.
 
-Images, audio, video, PDF, raw links and downloads are served by a separate streaming endpoint that supports byte ranges, so the browser can seek media and the PDF viewer can load pages on demand, sends the type from the same fixed map with nosniff, and reads the file in chunks so memory stays flat on large files. Archive contents are listed by a list-only command chosen from the file suffix, with the path passed as a single escaped argument, flags that never extract, and a capped number of entries. SVG is only ever shown inside an image element, which neutralises any script it might contain. Text and code are read up to the preview limit and highlighted in the browser, and Markdown is rendered and then sanitised before it is shown. The richer formats (documents, spreadsheets, CSV, fonts, and e-books) are parsed by bundled libraries running in the browser from the file's own bytes; the HTML produced from documents and spreadsheets is sanitised before display, and each type has a size limit so a large file is never pulled fully into the browser. SQLite is the one exception: the server opens the database itself, read-only and immutable so no locks are taken, and returns one page of rows at a time.
+Images, audio, video, PDF, raw links and downloads are served by a separate streaming endpoint that supports byte ranges, so the browser can seek media and the PDF viewer can load pages on demand, sends the type from the same fixed map with nosniff, and reads the file in chunks so memory stays flat on large files. Archive contents are listed by a list-only command chosen from the file suffix, with the path passed as a single escaped argument, flags that never extract, and a capped number of entries. SVG is only ever shown inside an image element, which neutralises any script it might contain. Text and code are read up to the preview limit and highlighted in the browser, and Markdown is rendered and then sanitised before it is shown; if the sanitiser is unavailable the file is shown as plain text instead of rendered. The richer formats (documents, spreadsheets, CSV, fonts, and e-books) are parsed by bundled libraries running in the browser from the file's own bytes; the HTML produced from documents and spreadsheets is sanitised before display, and each type has a size limit so a large file is never pulled fully into the browser. SQLite is the one exception: the server opens the database itself, read-only and immutable so no locks are taken, and returns one page of rows at a time.
 
-Writes are plain filesystem calls with guard rails. A delete is a rename into the share's own `.RecycleBin` folder on the same filesystem, so it is instant at any size and never copies data, and restore renames it back. The bin folder is vetoed in Samba and owned by root, so network clients can neither see nor enter it. Long copies, moves, and deletes run in a detached worker that reports progress and honours cancel, and uploads arrive in chunks into a hidden part file that only takes its real name once the last chunk lands.
+Writes are plain filesystem calls with guard rails. Whether a delete goes to the recycle bin is decided by the setting on the server, not by the page that asked, and a folder that is really a mount point is refused outright. A delete is a rename into the share's own `.RecycleBin` folder on the same filesystem, so it is instant at any size and never copies data, and restore renames it back. The bin folder is vetoed in Samba and owned by root, so network clients can neither see nor enter it. Long copies, moves, and deletes run in a detached worker that reports progress and honours cancel, and uploads arrive in chunks into a hidden part file that only takes its real name once the last chunk lands.
 
 Reading a file's content does wake the disk that holds it, so opening a file for preview spins up its disk. Listing and the details card use `stat` only and never wake a disk, so browsing folders stays disk friendly.
 

@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <Plugin>
   <Name>Files Viewer</Name>
-  <Overview><![CDATA[A file browser and manager for Unraid. Previews files (images, text, PDF, video, archives, SQLite and more) and manages them directly from the browser. Deleted files go to a recycle bin kept per share.]]></Overview>
+  <Overview><![CDATA[A file browser and manager for Unraid. Previews files (images, text, PDF, video, archives, SQLite and more) and manages them directly from the browser. An optional recycle bin, kept per share, catches deletes made here.]]></Overview>
   <PluginURL>https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/filesviewer.plg</PluginURL>
   <PluginAuthor>Lazaros Chalkidis</PluginAuthor>
   <Support>https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues</Support>

@@ -146,6 +146,37 @@
   }
 }
 
+/* page heading, sits above the panel and outside its border */
+.fv-page-head {
+  display: flex;
+  align-items: center;
+  gap: .75rem;
+  margin-bottom: 1rem;
+}
+.fv-page-head__icon  { width: 36px; height: 36px; object-fit: contain; flex: none; }
+.fv-page-head__title {
+  display: flex;
+  align-items: baseline;
+  gap: .5rem;
+  flex-wrap: wrap;
+  font-size: 1.6rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--fv-c-text);
+}
+.fv-page-head__suite {
+  font-size: .94rem;
+  font-weight: 400;
+  letter-spacing: .7px;
+  text-transform: none;
+  color: var(--fv-c-text-muted);
+}
+.fv-page-head__desc {
+  margin-top: 2px;
+  font-size: 1.05rem;
+  color: var(--fv-c-text-mid);
+}
+
 .filesviewer-settings .fv-settings-panel {
   background: var(--fv-panel-bg);
   border: 1px solid var(--fv-c-border);
@@ -260,25 +291,36 @@
   line-height: 1.3;
 }
 
+/* a boxed note rather than loose amber text. the vertical padding fits inside the
+   38px row, so the row does not get taller */
 .fv-r-desc--warn {
-  color: #ffb300;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 9px;
+  border-radius: 4px;
+  border-left: 3px solid #ffb300;
+  background: rgba(255,179,0,.10);
+  color: var(--fv-c-text);
 }
+.fv-r-desc--warn .fa,
+.fv-r-desc--warn b { color: #ffb300; }
+.fv-r-desc--warn .fa { flex: none; font-size: 12.5px; }
+.fv-r-desc--warn b   { font-weight: 600; }
 
-/* stacks a row description and the red note below it on one left edge */
-.fv-r-desccol {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-  min-width: 0;
-}
-.fv-r-danger {
-  font-size: 11.5px;
-  font-weight: 500;
+/* only appears when an Apply did not reach the flash */
+.fv-save-err {
+  margin: 0 0 10px;
+  padding: 8px 12px;
+  border: 1px solid rgba(224,82,82,.45);
+  border-radius: 4px;
+  background: rgba(224,82,82,.10);
   color: #e05252;
-  line-height: 1.3;
+  font-size: 12px;
+  line-height: 1.4;
 }
-.fv-light .fv-r-danger,
-.fv-theme-azure .fv-r-danger { color: #c62828; }
+.fv-light .fv-save-err,
+.fv-theme-azure .fv-save-err { color: #c62828; }
 
 .fv-r-warn {
   font-size: 11px;
@@ -435,6 +477,7 @@
   align-items: center !important;
   gap: .25rem !important;
   padding: 3px 8px !important;
+  margin: 0 !important;   /* the unraid theme spaces buttons apart on its own */
   border-radius: 4px !important;
   cursor: pointer !important;
   font-size: 11px !important;
@@ -626,7 +669,7 @@
 }
 .fv-credits-title-row {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   margin-bottom: 4px;
   flex-wrap: wrap;
@@ -636,6 +679,21 @@
   font-weight: 600;
   color: rgba(255,255,255,.87);
 }
+.fv-credits-suite {
+  font-size: 9px;
+  color: rgba(255,255,255,.40);
+  letter-spacing: .5px;
+}
+
+/* the badge sits on its own line above the copyright, both centred on it */
+.fv-credits-footer-text {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
 .fv-credits-version {
   background: rgba(244,125,66,.12);
   color: #f47d42;
@@ -748,7 +806,22 @@
   background: #f4f5f7;
   border-top-color: rgba(0,0,0,.10);
 }
-.fv-light .fv-credits-copy { color: rgba(0,0,0,.55); }
+.fv-light .fv-credits-copy  { color: rgba(0,0,0,.55); }
+
+/* the accents are tuned for the dark panel, so the light themes get darker ones
+   rather than the same orange washed out on a near white background */
+.fv-light .fv-action-btn--apply     { color: #2f7e33 !important; }
+.fv-light .fv-action-btn--reset     { color: #c64200 !important; }
+.fv-light .fv-r-desc--warn          { color: var(--fv-c-text); background: rgba(147,103,0,.09); border-left-color: #896000; }
+.fv-light .fv-r-desc--warn .fa,
+.fv-light .fv-r-desc--warn b        { color: #896000; }
+.fv-light .fv-footer-link:hover,
+.fv-light .fv-footer-link:focus     { color: #006bdb; }
+.fv-light .fv-credits-role,
+.fv-light .fv-credits-version,
+.fv-light .fv-credits-link:hover .fa { color: #c64200; }
+
+.fv-light .fv-credits-suite { color: rgba(0,0,0,.45); }
 
 @media (max-width: 1400px) { .filesviewer-settings { width: 78%; } }
 

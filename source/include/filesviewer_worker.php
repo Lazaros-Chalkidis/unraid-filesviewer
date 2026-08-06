@@ -63,6 +63,19 @@ final class FilesViewerWorker
             return;
         }
 
+        // this is a separate root process taking paths from a file, so it confines
+        // them itself instead of trusting whoever wrote the spec
+        if (FilesViewerEndpoint::safePath($dest, 'dir') === null) {
+            self::patch(['state' => 'error', 'message' => 'bad job spec']);
+            return;
+        }
+        foreach ($sources as $s) {
+            if (FilesViewerEndpoint::safePath((string)$s) === null) {
+                self::patch(['state' => 'error', 'message' => 'bad job spec']);
+                return;
+            }
+        }
+
         @set_time_limit(0);
 
         // size each source once: for the totals and for the instant-rename bump
@@ -241,7 +254,6 @@ final class FilesViewerWorker
         FilesViewerEndpoint::jobPatch(self::$id, $p);
     }
 
-    // ---- space analysis -------------------------------------------------------
     // ranks the direct children of a folder by the disk space they hold, in one
     // walk of the whole tree. sizes come from lstat blocks, so sparse files count
     // what they really allocate; links are never followed; an inode with several
@@ -257,7 +269,10 @@ final class FilesViewerWorker
     private static function spaceScan(array $spec): void
     {
         $root = (string)($spec['path'] ?? '');
-        if ($root === '' || !is_dir($root)) { self::patch(['state' => 'error', 'message' => 'folder not found']); return; }
+        if ($root === '' || FilesViewerEndpoint::safePath($root, 'dir') === null) {
+            self::patch(['state' => 'error', 'message' => 'folder not found']);
+            return;
+        }
 
         @set_time_limit(0);
         $t0    = microtime(true);
@@ -284,20 +299,22 @@ final class FilesViewerWorker
                 $bytes += self::allocBytes($st);            // the folder inode itself, like du
                 $stack = [$full];
                 while ($stack) {
-                    if ((++$tick & 511) === 0) {
-                        if (self::cancelled()) { self::patch(['state' => 'cancelled', 'current' => '']); return; }
-                        $now = microtime(true);
-                        if ($now - $lastPatch > 0.4) {
-                            $lastPatch = $now;
-                            self::patch(['children_done' => $done, 'bytes' => $totalBytes + $bytes,
-                                         'files' => $totalFiles + $files, 'skipped' => $skipped, 'current' => $name]);
-                        }
-                    }
                     $d  = array_pop($stack);
                     $es = @scandir($d);
                     if ($es === false) { $skipped++; continue; }
                     foreach ($es as $e) {
                         if ($e === '.' || $e === '..') continue;
+                        // counted per entry, not per folder: a tree with few folders and
+                        // a million files would otherwise never report and never cancel
+                        if ((++$tick & 511) === 0) {
+                            if (self::cancelled()) { self::patch(['state' => 'cancelled', 'current' => '']); return; }
+                            $now = microtime(true);
+                            if ($now - $lastPatch > 0.4) {
+                                $lastPatch = $now;
+                                self::patch(['children_done' => $done, 'bytes' => $totalBytes + $bytes,
+                                             'files' => $totalFiles + $files, 'skipped' => $skipped, 'current' => $name]);
+                            }
+                        }
                         $p = $d . '/' . $e;
                         $s = @lstat($p);
                         if ($s === false) { $skipped++; continue; }

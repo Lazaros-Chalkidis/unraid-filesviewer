@@ -53,6 +53,13 @@ It previews the common types in place: images, text and code with syntax highlig
 
 Files Viewer works inside /mnt and nowhere else, reading and writing alike. The mount points themselves, /mnt/user, the pools and the disks, can be browsed and copied but not renamed, moved or deleted, since removing one would empty everything it holds. A folder with more items than the listing carries shows the first few thousand and says so at the bottom of the list. Every path is resolved and checked on the server before anything happens, and every write is logged. The recycle bin only catches deletes made in Files Viewer; deletions over SMB or by other tools bypass it, and turning the bin off makes deletes permanent. Most rich formats are parsed in the browser from the file's own bytes; SQLite is the exception and is opened read-only on the server. Listing for 7z and rar is not included, since those need extra tools that are not assumed to be present; those files show their details with a download instead. Video that uses a container or codec the browser cannot decode (for example MKV or H.265) also falls back to details.
 
+**Walkthrough**
+ 
+A video by [Sascha Brockel](https://www.youtube.com/@saschabrockel), with Files Viewer as the main focus. Thanks Sascha.
+
+The video is in German. YouTube can auto-translate the subtitles, so you can follow it in your own language.
+ 
+[![Files Viewer walkthrough](https://img.youtube.com/vi/MTUURZIZWWQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=MTUURZIZWWQ)
 
 **Tool page Screenshots**
 

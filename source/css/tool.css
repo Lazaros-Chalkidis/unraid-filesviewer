@@ -1491,6 +1491,8 @@
 .fv-rb-segbtn--on { color: var(--fv-accent) !important; background: rgba(66,165,245,.12) !important; }
 .fv-rb-segbtn[disabled] { opacity: .45 !important; cursor: default !important; }
 .fv-rb-policy { font-size: 1.0rem; color: var(--fv-text-dim); }
+.fv-rb-foreign { color: var(--fv-k-rename); }
+
 .fv-rb-note { font-size: 1.0rem; color: var(--fv-warn-text); }
 .fv-rb-loading { font-size: 1.1rem; color: var(--fv-text-dim); padding: 2rem 0; text-align: center; }
 .fv-rb-list { display: flex; flex-direction: column; gap: .8rem; }

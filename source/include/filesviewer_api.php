@@ -1336,11 +1336,18 @@ final class FilesViewerEndpoint
                     $names[] = basename((string)($it['rel'] ?? ''));
                     if (isset($it['size'])) $size += (int)$it['size']; else $sized = false;
                 }
+                // a bin restored from a backup into a different share still carries
+                // the old paths, and restore will refuse every item. say so here
+                // instead of letting the user find out by pressing the button
+                $home    = (string)($meta['share_root'] ?? '');
+                $foreign = ($home !== '' && $home !== dirname($bin)) ? $home : '';
+
                 $row = [
                     'id'         => $e,
                     'event'      => $ed,
                     'share'      => basename(dirname($bin)),
                     'origin'     => dirname($bin),
+                    'foreign'    => $foreign,
                     'deleted_at' => (int)($meta['deleted_at'] ?? @filemtime($ed)),
                     'count'      => count($items),
                     'kind'       => count($items) === 1 ? (!empty($items[0]['is_dir']) ? 'dir' : 'file') : 'multi',
@@ -1384,6 +1391,12 @@ final class FilesViewerEndpoint
         $items = is_array($meta['items'] ?? null) ? $meta['items'] : null;
         if (!$items) return ['ok' => false, 'error' => 'event metadata is missing'];
 
+        $home = (string)($meta['share_root'] ?? '');
+        if ($home !== '' && $home !== $shareRoot) {
+            return ['ok' => false, 'error' => 'these items were deleted from ' . basename($home) .
+                    ', so they cannot be put back from here. Move this bin folder back into that share first.'];
+        }
+
         $basis = @stat($shareRoot);
         $done = 0; $failed = []; $left = [];
         foreach ($items as $it) {
@@ -1412,7 +1425,7 @@ final class FilesViewerEndpoint
         } else {
             @file_put_contents($ev . '/meta.json', json_encode([
                 'version' => 1, 'deleted_at' => (int)($meta['deleted_at'] ?? time()),
-                'share_root' => $shareRoot, 'items' => $left,
+                'share_root' => ($meta['share_root'] ?? $shareRoot), 'items' => $left,
             ], JSON_UNESCAPED_SLASHES));
         }
 

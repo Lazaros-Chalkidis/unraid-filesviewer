@@ -1,2 +1,16 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# these run on the server, and a CR at the end of a line breaks them: bash reports
+# a syntax error and cron silently ignores the entry. keep them LF whatever the
+# checkout platform does.
+*.sh    text eol=lf
+*.cron  text eol=lf
+*.php   text eol=lf
+*.page  text eol=lf
+*.js    text eol=lf
+*.css   text eol=lf
+*.plg   text eol=lf
+*.xml   text eol=lf
+*.md    text eol=lf
+
+*.png   binary
+*.txz   binary
+*.svg   text eol=lf

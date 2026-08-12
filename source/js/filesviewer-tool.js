@@ -51,6 +51,18 @@
     function saveDir(p) { if (!_remember) return; try { if (p) localStorage.setItem(LS_KEY, p); } catch (e) {} }
     function readDir()  { if (!_remember) return ''; try { return localStorage.getItem(LS_KEY) || ''; } catch (e) { return ''; } }
 
+    // a space scan outlives the page: the worker keeps walking whether anyone is
+    // watching or not, so the id is parked here to pick the scan back up
+    var SP_KEY = 'filesviewer:spacejob';
+    function spSaveJob(id, path) { try { localStorage.setItem(SP_KEY, JSON.stringify({ id: id, path: path })); } catch (e) {} }
+    function spClearJob()        { try { localStorage.removeItem(SP_KEY); } catch (e) {} }
+    function spReadJob() {
+        try {
+            var j = JSON.parse(localStorage.getItem(SP_KEY) || 'null');
+            return (j && j.id) ? j : null;
+        } catch (e) { return null; }
+    }
+
     function fetchJson(action, extra) {
         return fetch(apiUrl(action, extra), {
             headers: { 'X-Requested-With': 'XMLHttpRequest' },
@@ -395,13 +407,6 @@
         _listEl.setAttribute('data-trunc', data.truncated ? '1' : '0');
         _selected = {};                      // a fresh listing starts with nothing ticked
 
-        if (!entries.length) {
-            _listEl.innerHTML = '<div class="fv-list-empty">This folder is empty.</div>';
-            if (_countEl) _countEl.textContent = '';
-            updateOps();
-            return;
-        }
-
         var sel = !data.root_picker;         // roots are not selectable targets
         var cb  = sel ? '<label class="fv-item__cb"><input type="checkbox" class="fv-rowcb" aria-label="Select"></label>' : '';
         var html = '';
@@ -413,6 +418,15 @@
                       '<div class="fv-item__meta"><div class="fv-item__name">..</div>' +
                       '<div class="fv-item__sub"><span class="fv-sub__cell">Parent folder</span></div></div>' +
                     '</div>';
+        }
+
+        // the way back is built first, because an empty folder is exactly when it is
+        // the only thing on screen
+        if (!entries.length) {
+            _listEl.innerHTML = html + '<div class="fv-list-empty">This folder is empty.</div>';
+            if (_countEl) _countEl.textContent = '';
+            updateOps();
+            return;
         }
 
         for (var i = 0; i < entries.length; i++) {
@@ -1022,6 +1036,15 @@
         else                                     loadMeta(path);
     }
 
+    // sqlite leaves a -wal and a -shm next to the database. neither is a database
+    // and neither opens, so say which file to open instead of a blank refusal
+    function sidecarNote(name) {
+        var m = /^(.*\.(?:db|db3|sqlite|sqlite3))-(wal|shm|journal)$/i.exec(name);
+        if (!m) return '';
+        var what = { wal: 'write-ahead log', shm: 'shared memory file', journal: 'rollback journal' }[m[2]];
+        return 'This is the SQLite ' + what + ' for ' + esc(m[1]) + ', not a database of its own. Open that file to browse the data.';
+    }
+
     function openFile(item) {
         leaveEditOk(function () { openFileNow(item); });
     }
@@ -1061,7 +1084,7 @@
             var cap = caps[cat];
             loadMeta(path, (cap && size > 0)
                 ? 'This file is over the ' + formatBytes(cap[0]) + ' preview limit for ' + cap[1] + '.'
-                : '');
+                : sidecarNote(name));
             return;
         }
 
@@ -1850,7 +1873,7 @@
 
     function resetSpace() {
         if (_spTimer) { clearInterval(_spTimer); _spTimer = null; }
-        if (_spaceMode && _spJobId) postJson('job_cancel', { id: _spJobId });   // stop a running walk quietly
+        if (_spaceMode && _spJobId) { postJson('job_cancel', { id: _spJobId }); spClearJob(); }
         _spaceMode = false; _spJobId = ''; _spCancelling = false;
     }
 
@@ -1880,6 +1903,7 @@
             if (!_spaceMode) return;
             if (!d || !d.ok) { renderSpaceError((d && d.error) || 'failed'); return; }
             _spJobId = d.id;
+            spSaveJob(d.id, path);
             _spTimer = setInterval(pollSpace, 500);
             pollSpace();
         });
@@ -1902,10 +1926,36 @@
     function stopSpacePoll() {
         if (_spTimer) { clearInterval(_spTimer); _spTimer = null; }
         _spJobId = '';
+        spClearJob();
     }
 
     function spHead(btnHtml) {
         return '<div class="fv-sp-top"><div class="fv-sp-title">Space usage <span>\u00b7 ' + esc(baseName(_spPath || '/')) + '</span></div>' + btnHtml + '</div>';
+    }
+
+    // picks a scan back up after a page change. a finished one is shown once and
+    // then forgotten, so the next visit opens clean
+    function spResume() {
+        var j = spReadJob();
+        if (!j) return;
+        fetchJson('job_status', 'id=' + encodeURIComponent(j.id)).then(function (d) {
+            var st = d && d.ok && d.status;
+            if (!st || (st.state !== 'running' && st.state !== 'queued' && st.state !== 'done')) { spClearJob(); return; }
+
+            resetPaneModes();
+            _spaceMode = true;
+            _spPath = j.path || '';
+            _spCancelling = false;
+            if (_pvEl) _pvEl.classList.add('fv-preview--active');
+            renderPathCrumbs(null);
+            if (_pvToolsEl) _pvToolsEl.innerHTML = '';
+            setFileTools(false, false);
+
+            if (st.state === 'done') { spClearJob(); renderSpaceResult(st); return; }
+            _spJobId = j.id;
+            _spTimer = setInterval(pollSpace, 500);
+            renderSpaceProgress(st);
+        }).catch(function () { spClearJob(); });
     }
 
     function spBindRescan() {
@@ -2106,6 +2156,9 @@
                 var cnt = ev.count === 1 ? (ev.kind === 'dir' ? '1 folder' : '1 item') : ev.count + ' items';
                 var sub = esc(ev.share || '') + ' \u00b7 ' + esc(relTime(ev.deleted_at)) + ' \u00b7 ' + cnt;
                 if (!ev.size_partial && ev.size > 0) sub += ' \u00b7 ' + fmtBytes(ev.size);
+                // a bin that arrived here with a backup keeps the old paths, so Restore
+                // would only fail. say it up front and take the button away
+                if (ev.foreign) sub += ' \u00b7 <span class="fv-rb-foreign">deleted from ' + esc(baseName(ev.foreign)) + ', cannot be restored here</span>';
                 html += '<div class="fv-rb-ev">' +
                           '<div class="fv-rb-chip' + (ev.count > 1 ? ' fv-rb-chip--n' : '') + '">' + chip + '</div>' +
                           '<div class="fv-rb-main">' +
@@ -2113,7 +2166,7 @@
                             '<div class="fv-rb-sub">' + sub + '</div>' +
                           '</div>' +
                           '<div class="fv-rb-act">' +
-                            '<button type="button" class="fv-btn" data-rb="restore" data-i="' + i + '">Restore</button>' +
+                            (ev.foreign ? '' : '<button type="button" class="fv-btn" data-rb="restore" data-i="' + i + '">Restore</button>') +
                             '<button type="button" class="fv-btn fv-btn--danger" data-rb="purge" data-i="' + i + '">Delete forever</button>' +
                           '</div>' +
                         '</div>';
@@ -2636,7 +2689,7 @@
 
         setMode(false);   // start in preview-only
         favLoad();
-        loadDir(readDir(), true);
+        loadDir(readDir(), true).then(spResume);
     }
 
     if (document.readyState === 'loading') {

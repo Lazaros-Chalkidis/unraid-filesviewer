@@ -1,6 +1,14 @@
 
 # Files Viewer
 
+## Version 2026.08.12
+
+### Fixed
+- A recycle bin that came back with a restored backup, into a share it did not belong to, offered a Restore that could never work. The bin now says which share the items came from and leaves that button out
+- A Space scan was lost if you left the page and came back. The scan itself kept running on the server, it was only the page that forgot about it. It picks it back up now, and shows the result if it finished while you were away
+- An empty folder left you stuck. The row that walks back up was dropped along with the rest of the listing, so the breadcrumb was the only way out
+- The -wal and -shm files sitting next to a SQLite database now say what they are and point at the database, instead of just refusing to open
+
 ## Version 2026.08.06
 
 ### New Features

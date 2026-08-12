@@ -61,15 +61,6 @@ The video is in German. YouTube can auto-translate the subtitles, so you can fol
  
 [![Files Viewer walkthrough](https://img.youtube.com/vi/MTUURZIZWWQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=MTUURZIZWWQ)
 
-**Walkthrough**
-
-A video by [Sascha Brockel](https://www.youtube.com/@saschabrockel), with Files Viewer as the main focus. Thanks Sascha.
-
-The video is in German. YouTube can auto-translate the subtitles, so you can follow it in your own language.
-
-[![Files Viewer walkthrough](https://img.youtube.com/vi/MTUURZIZWWQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=MTUURZIZWWQ)
-
-
 **Tool page Screenshots**
 
 ![Tool](screenshots/tool1.png)

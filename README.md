@@ -1,6 +1,8 @@
 # Files Viewer for Unraid
 
-Browse your Unraid shares and disks from a page under Tools, preview files in place, and manage them without leaving the browser. Turn on the recycle bin and deletes land in a per-share bin instead of vanishing.
+Browse your Unraid shares and disks from a page under Tools, preview files in place, and manage them without leaving the browser. 
+
+Turn on the recycle bin and deletes land in a per-share bin instead of vanishing.
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/Lazaros-Chalkidis/unraid-filesviewer?label=Latest%20Version&color=blue" style="margin: 4px;" />&nbsp;
@@ -12,14 +14,16 @@ Browse your Unraid shares and disks from a page under Tools, preview files in pl
 
 ## What it does
 
-Unraid's built-in File Manager is great for moving files around, but it shows "Unsupported Preview" for most file types. Files Viewer started as its read-only companion and grew into a manager of its own: a two-pane page under Tools where you browse on the left, see what is selected on the right, and act on it from the bar above.
+Unraid's built-in File Manager is great for moving files around, but it shows "Unsupported Preview" for most file types. Files Viewer started as its read-only companion and grew into a manager of its own: a page under Tools where the folder fills the window, or splits into a list and a preview if you prefer, with everything you can do to a file in the bar above.
 
 It previews the common types in place: images, text and code with syntax highlighting, Markdown, audio and video, and PDF, and it lists the contents of zip and tar archives. Richer formats open too: SQLite databases, Word documents, spreadsheets, CSV as a table, fonts, and e-books. On the writing side it covers the everyday jobs: create, rename, edit, move, copy, upload, download, ownership, permissions, and delete.
 
 ## Features
 
-- Tools Page: A full-page two-pane browser under Tools > Files Viewer, with a folder list on the left and a preview pane on the right
+- Tools Page: A full-page browser under Tools > Files Viewer. By default the folder fills the window as a table, and the icon at the top right slides out the folder list beside it when you want both. It stays where you left it
 - Rooted at /mnt: Browsing starts at /mnt and stays inside it, so every disk, pool, and share is reachable in one place and nothing above /mnt is
+- Folder table: Name, type, size, modified time, owner, group and mode, with a header that stays put while you scroll. Click a folder to open it, a file to preview it
+- Measure a folder: Folders have no size until something reads them, so the size column offers a Measure button that works out what one holds. It is the same scan the Space button runs, for that folder only, and appears only when Space is turned on
 - Write operations: Create files and folders, rename, move, copy, delete, and change owner or permissions from the top bar
 - In-place editor: Open text and config files up to 2 MB in the preview pane, change them, and save them back
 - Upload and download: Send files from your machine to the current folder, cancel midway if you change your mind, and pull any file back out
@@ -41,10 +45,10 @@ It previews the common types in place: images, text and code with syntax highlig
 - E-book preview: Read .epub books in place with previous and next
 - Light on the page: The richer previews load their viewer only the first time one is needed, and each has its own size limit
 - Disk friendly browsing: Listing folders reads directory entries and metadata only, so browsing never wakes a sleeping disk. Opening a file reads its content, which wakes the disk that holds it
-- Favourites: Pin any folder or single file with the star in the preview header and jump straight back to it from the Favourites button. They live on the flash drive, so they follow you to any browser, and anything you delete drops off the list on its own
+- Favourites: Pin any folder or single file with the star in the path bar and jump straight back to it from the Favourites button. They live on the flash drive, so they follow you to any browser, and anything you delete drops off the list on its own
 - Breadcrumb navigation: Click any part of the path to jump back up, with an Up row inside each folder
 - Folder-aware sorting: Sort by name, size, or modified time, ascending or descending, with folders kept first if you want
-- Quick filter and keyboard: Type to filter the current folder by name, move with the arrow keys, and open with Enter
+- Quick filter and keyboard: Type to filter the current folder by name, move with the arrow keys, and open with Enter. The filter sits in the path bar with one pane and in the folder list with two
 - Remembers your place: Reopens at the folder you were last browsing, which you can turn off
 - Theme-aware: Follows the active Unraid theme, with its own palette for each of Black, White, Azure and Gray rather than one light and one dark
 - Settings Page: Standalone settings at Settings > Files Viewer with browser-native form submission
@@ -53,13 +57,15 @@ It previews the common types in place: images, text and code with syntax highlig
 
 Files Viewer works inside /mnt and nowhere else, reading and writing alike. The mount points themselves, /mnt/user, the pools and the disks, can be browsed and copied but not renamed, moved or deleted, since removing one would empty everything it holds. A folder with more items than the listing carries shows the first few thousand and says so at the bottom of the list. Every path is resolved and checked on the server before anything happens, and every write is logged. The recycle bin only catches deletes made in Files Viewer; deletions over SMB or by other tools bypass it, and turning the bin off makes deletes permanent. Most rich formats are parsed in the browser from the file's own bytes; SQLite is the exception and is opened read-only on the server. Listing for 7z and rar is not included, since those need extra tools that are not assumed to be present; those files show their details with a download instead. Video that uses a container or codec the browser cannot decode (for example MKV or H.265) also falls back to details.
 
+
 **Walkthrough**
- 
+
 A video by [Sascha Brockel](https://www.youtube.com/@saschabrockel), with Files Viewer as the main focus. Thanks Sascha.
 
 The video is in German. YouTube can auto-translate the subtitles, so you can follow it in your own language.
- 
+
 [![Files Viewer walkthrough](https://img.youtube.com/vi/MTUURZIZWWQ/maxresdefault.jpg)](https://www.youtube.com/watch?v=MTUURZIZWWQ)
+
 
 **Tool page Screenshots**
 

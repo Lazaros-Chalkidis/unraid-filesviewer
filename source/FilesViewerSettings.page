@@ -122,7 +122,9 @@ if ($plugin_version === '') $plugin_version = 'dev';
 $sel = static fn($a, $b) => ((string)$a === (string)$b) ? ' selected' : '';
 ?>
 
-<link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/settings.css">
+<link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/settings.css?v=<?= rawurlencode($plugin_version) ?>">
+<script>/* firefox paints the markup below before the sheet above arrives. a script
+after a stylesheet has to wait for it, which holds the parser and stops the flash. */</script>
 
 <form name="filesviewer_settings" method="post" class="filesviewer-settings<?= $rootClasses ?>" autocomplete="off">
 
@@ -232,7 +234,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
     </div>
   </div>
 
-  <div class="fv-sec closed" id="fvSecPreview">
+  <div class="fv-sec closed" id="fvSecAppearance">
     <div class="fv-sec-hd">
       <span>Appearance</span>
       <span class="fv-pill">How the tool page looks</span>
@@ -249,7 +251,9 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
       </div>
 
     </div>
+  </div>
 
+  <div class="fv-sec closed" id="fvSecPreview">
     <div class="fv-sec-hd">
       <span>Preview</span>
       <span class="fv-pill">Inline preview limits</span>
@@ -326,7 +330,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
     </div>
   </div>
 
-  <div class="fv-sec closed" id="fvSecRecycle">
+  <div class="fv-sec closed" id="fvSecSpace">
     <div class="fv-sec-hd">
       <span>Space analysis</span>
       <span class="fv-pill">Folder size scanning</span>
@@ -343,7 +347,9 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
       </div>
 
     </div>
+  </div>
 
+  <div class="fv-sec closed" id="fvSecRecycle">
     <div class="fv-sec-hd">
       <span>Recycle bin</span>
       <span class="fv-pill">Safety net for deletes</span>

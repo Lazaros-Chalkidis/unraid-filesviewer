@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "filesviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.08.12">
+ <!ENTITY version   "2026.08.15">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-filesviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/&branch;/&name;.plg">
- <!ENTITY md5       "6cbde204008ac15956526f7de89cf170">
+ <!ENTITY md5       "510a938503eac7cf75f748a1bda44e8a">
  <!ENTITY launch    "Settings/FilesViewerSettings">
 ]>
 
@@ -27,6 +27,17 @@ A file browser and manager. Previews files and manages daily tasks. Deletes file
 <![CDATA[
 
 # Files Viewer
+
+## Version 2026.08.15
+
+### Added
+- One pane by default. The folder is listed across the whole window with type, size, date, owner, group and mode, and a header that stays put while you scroll. The icon at the top right slides the folder list back out when you want it, and remembers which one you left it on
+- Turning on editing adds a tick column to that listing, so files can be picked for the toolbar actions from either pane
+- Opening a folder that sits on a sleeping disk says so on the row while it waits, instead of looking like the click did nothing
+- Folders in that listing have a Measure button in the size column. It works out what the folder actually holds, the same job the Space button runs, and only for the row you asked about
+
+### Fixed
+- Closing a video or audio preview before it finished left an error in the syslog and kept the disk reading a file nobody was watching. It now stops as soon as the player goes away
 
 ## Version 2026.08.12
 

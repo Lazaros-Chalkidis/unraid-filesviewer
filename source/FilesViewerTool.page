@@ -29,6 +29,12 @@ $var = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
 
 $fvCfg = FilesViewerEndpoint::config();
 $monoClass = $fvCfg['btn_colors'] ? '' : ' fv-btn-plain';
+// browsers keep css and js until the url changes, so an update ships new files
+// that nobody loads. the build stamp makes each release its own url.
+$asset_v = trim((string)@file_get_contents('/usr/local/emhttp/plugins/filesviewer/VERSION'));
+if ($asset_v === '') $asset_v = (string)@filemtime(__FILE__);
+$asset_v = '?v=' . rawurlencode($asset_v);
+
 $tool_config = [
     'fvToken'    => FilesViewerEndpoint::generateNonce(),
     'csrfToken'  => (string)($var['csrf_token'] ?? ''),
@@ -39,12 +45,14 @@ $tool_config = [
     'remember'   => $fvCfg['remember'],
     'recycle'    => $fvCfg['recycle'],
     'permsFormat'=> $fvCfg['perms_format'],
+    'assetV'     => $asset_v,
+    'space'      => $fvCfg['space'],
     'roots'      => $fvCfg['roots'],
 ];
 $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
 ?>
 
-<link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/tool.css">
+<link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/tool.css<?= $asset_v ?>">
 <script>window.filesviewerToolConfig = <?= $tool_config_json ?>;</script>
 
 <div class="fv-wrapper<?= $themeClass . $lightClass . $monoClass ?>">
@@ -64,6 +72,7 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
       </div>
       <div class="fv-header__right">
         <div class="fv-header__icons">
+          <a href="#" id="fv-op-side" title="Show the folder list" aria-label="Show the folder list" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></a>
           <a href="#" id="fv-mode" title="Preview only - click to allow editing" aria-label="Toggle editing"><i class="fa fa-fw fa-eye" aria-hidden="true"></i></a>
           <a href="/Settings/FilesViewerSettings" title="Settings" aria-label="Settings"><i class="fa fa-fw fa-cog" aria-hidden="true"></i></a>
         </div>
@@ -104,6 +113,9 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
 
       <div class="fv-preview">
         <div class="fv-preview__head">
+          <div class="fv-filter fv-filter--inline">
+            <input type="text" id="fv-filter-wide" class="fv-filter__input" placeholder="Filter this folder" spellcheck="false" autocomplete="off">
+          </div>
           <nav class="fv-crumbs" id="fv-pv-crumbs" aria-label="Path"></nav>
           <div class="fv-preview__tools" id="fv-pv-tools"></div>
           <div class="fv-pv-actions" id="fv-pv-actions">
@@ -129,10 +141,10 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
 
 </div>
 
-<script defer src="/plugins/filesviewer/js/vendor/highlight.min.js"></script>
-<script defer src="/plugins/filesviewer/js/vendor/marked.umd.js"></script>
-<script defer src="/plugins/filesviewer/js/vendor/purify.min.js"></script>
-<script defer src="/plugins/filesviewer/js/filesviewer-tool.js"></script>
+<script defer src="/plugins/filesviewer/js/vendor/highlight.min.js<?= $asset_v ?>"></script>
+<script defer src="/plugins/filesviewer/js/vendor/marked.umd.js<?= $asset_v ?>"></script>
+<script defer src="/plugins/filesviewer/js/vendor/purify.min.js<?= $asset_v ?>"></script>
+<script defer src="/plugins/filesviewer/js/filesviewer-tool.js<?= $asset_v ?>"></script>
 
 <script>
 // the Tools shell caps page width and height. drop the width cap on our

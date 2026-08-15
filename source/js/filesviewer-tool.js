@@ -26,20 +26,18 @@
     var API   = '/plugins/filesviewer/include/filesviewer_api.php';
     var SERVE = '/plugins/filesviewer/include/filesviewer_serve.php';
 
-    // the csrf token rides on the query so the same call style works for media
-    // src urls, which cannot send custom headers
+    // nothing secret goes in the query: it is written to the access log and to any
+    // diagnostics the user uploads. reads and writes send the csrf token as a
+    // header, media urls carry our own token instead
     function apiUrl(action, extra) {
-        var url = API + '?action=' + encodeURIComponent(action)
-                + '&_fvt=' + encodeURIComponent(_token)
-                + '&csrf_token=' + encodeURIComponent(csrfToken());
+        var url = API + '?action=' + encodeURIComponent(action);
         if (extra) url += '&' + extra;
         return url;
     }
 
     function serveUrl(path, dl) {
         var u = SERVE + '?path=' + encodeURIComponent(path)
-              + '&_fvt=' + encodeURIComponent(_token)
-              + '&csrf_token=' + encodeURIComponent(csrfToken());
+              + '&_fvt=' + encodeURIComponent(_token);
         if (dl) u += '&dl=1';
         return u;
     }
@@ -65,7 +63,7 @@
 
     function fetchJson(action, extra) {
         return fetch(apiUrl(action, extra), {
-            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            headers: { 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-TOKEN': csrfToken() },
             credentials: 'same-origin'
         }).then(function (r) {
             if (!r.ok) throw new Error('HTTP ' + r.status);
@@ -86,7 +84,10 @@
             method: 'POST',
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
-                'X-Requested-With': 'XMLHttpRequest'
+                'X-Requested-With': 'XMLHttpRequest',
+                // dynamix consumes csrf_token out of the body before the plugin
+                // runs, so the header is what our own check reads
+                'X-CSRF-TOKEN': csrfToken()
             },
             credentials: 'same-origin',
             body: body
@@ -108,7 +109,7 @@
         if (_libs[file]) return _libs[file];
         _libs[file] = new Promise(function (resolve, reject) {
             var s = document.createElement('script');
-            s.src = '/plugins/filesviewer/js/vendor/' + file;
+            s.src = '/plugins/filesviewer/js/vendor/' + file + (_cfg.assetV || '');
             s.onload = function () { resolve(); };
             s.onerror = function () { reject(new Error('could not load ' + file)); };
             document.head.appendChild(s);
@@ -255,6 +256,7 @@
 
 
     var _listEl, _crumbEl, _bodyEl, _titleEl, _countEl, _pvTypeEl, _pvToolsEl, _filterEl, _pvEl, _pvCloseEl, _dlBtn, _wrapBtn, _rawBtn;
+    var _filterWideEl = null, _filterNarrowEl = null, _sideBtn = null;
     var _createBtn, _renameBtn, _deleteBtn, _editBtn, _ownerBtn, _permBtn, _copyBtn, _moveBtn, _uploadBtn, _recycleBtn, _spaceBtn, _rootEl;
     var _editMode = false;      // false = preview only, true = editing allowed (header toggle)
     var _editable = false;      // the previewed file is small enough to edit
@@ -263,6 +265,13 @@
     var _currentCrumbs = [];     // folder breadcrumb data, reused to append the open file
     var _hasManyRoots = false;
     var EMPTY_HTML = '';
+    var _lastEntries = [];      // the open folder, kept so the pane can list it
+    var _lastParent = '';       // the way back, the pane needs its own row for it
+    var _measured = {};         // folder sizes already worked out, path -> bytes
+    var SIDE_KEY = 'filesviewer:sidebar';
+    function sideOn()  { try { return localStorage.getItem(SIDE_KEY) === '1'; } catch (e) { return false; } }
+    function sideSet(v) { try { localStorage.setItem(SIDE_KEY, v ? '1' : '0'); } catch (e) {} }
+    var _split = false;
     var _currentPath = '';
     var _starEl = null, _favBtn = null, _favMenuEl = null;
     var _selectedFile = null;   // path of the file in the preview, used by Open raw
@@ -307,9 +316,135 @@
     }
 
     // close the preview: dropping the media element stops playback, then show the empty pane
+    // with nothing open the pane says "select a file" across most of the window.
+    // the folder goes there instead, with the columns the narrow list cannot fit
+    function folderOverviewHtml() {
+        var q = (_filterEl && _filterEl.value) ? _filterEl.value.trim().toLowerCase() : '';
+        var rows = [];
+        for (var n = 0; n < _lastEntries.length; n++) {
+            if (q === '' || _lastEntries[n].name.toLowerCase().indexOf(q) !== -1) rows.push(_lastEntries[n]);
+        }
+        if (!rows.length && !_lastParent) return '';
+
+        var pick = _editMode;   // the tick column follows the preview/edit switch
+        var h = '<div class="fv-fo"><table class="fv-fo__t"><thead><tr>' +
+                  '<th class="fv-fo__nm">Name</th>' +
+                  (pick ? '<th class="fv-fo__c"><input type="checkbox" id="fv-fo-all" aria-label="Select all"></th>' : '') +
+                  '<th>Type</th><th class="fv-fo__r">Size</th><th>Modified</th>' +
+                  '<th>Owner</th><th>Group</th><th>Mode</th>' +
+                '</tr></thead><tbody>';
+
+        var cols = pick ? 8 : 7;
+        // the way out has to be here too, or the pane is a one way trip
+        if (_lastParent) {
+            h += '<tr class="fv-fo__row fv-fo__row--up" data-path="' + esc(_lastParent) + '" data-dir="1">' +
+                   '<td colspan="' + cols + '"><span class="fv-fo__ico">' + FOLDER_SVG + '</span>..</td></tr>';
+        }
+        for (var i = 0; i < rows.length; i++) {
+            var e  = rows[i];
+            var pv = (_permsFmt === 'symbolic') ? (e.perms || '') : (e.mode || '');
+            var ty = e.is_dir ? 'Folder' : (CAT_LABEL[e.category] || 'File');
+            if (e.link) ty += ' link';
+            h += '<tr class="fv-fo__row' + (_selected[e.path] ? ' selected' : '') + '"' +
+                   ' data-path="' + esc(e.path) + '" data-dir="' + (e.is_dir ? '1' : '0') + '">' +
+                   '<td class="fv-fo__nm"><span class="fv-fo__ico">' + (e.is_dir ? FOLDER_SVG : FILE_SVG) + '</span>' + esc(e.name) + '</td>' +
+                   (pick ? '<td class="fv-fo__c"><input type="checkbox" class="fv-focb"' + (_selected[e.path] ? ' checked' : '') + ' aria-label="Select"></td>' : '') +
+                   '<td>' + esc(ty) + '</td>' +
+                   '<td class="fv-fo__r">' + sizeCell(e) + '</td>' +
+                   '<td>' + (e.mtime ? fmtDate(e.mtime) : '') + '</td>' +
+                   '<td>' + esc(e.owner || '') + '</td>' +
+                   '<td>' + esc(e.group || '') + '</td>' +
+                   '<td>' + esc(pv) + '</td>' +
+                 '</tr>';
+        }
+        if (!rows.length) {
+            h += '<tr><td colspan="' + cols + '" class="fv-fo__none">' +
+                 (q === '' ? 'This folder is empty.' : 'Nothing matches the filter.') + '</td></tr>';
+        }
+        return h + '</tbody></table></div>';
+    }
+
+    // a folder has no size until something walks it, which is the same job the Space
+    // button runs and the same cost. offered per row, and only where Space is on
+    function sizeCell(e) {
+        if (!e.is_dir) return formatBytes(e.size);
+        if (_measured[e.path] !== undefined) return formatBytes(_measured[e.path]);
+        if (!_cfg.space) return '';
+        return '<button type="button" class="fv-fo__meas">Measure</button>';
+    }
+
+    // with the list hidden the spinner in it is out of sight, and the table sits
+    // there unchanged, so a folder on a sleeping disk looks like a dead click.
+    // the row says what it is waiting for, after a beat so a warm disk stays quiet
+    function openFolderRow(tr, path) {
+        // the row is looked up again when the time comes: loadDir rewrites the table
+        // on its way out, so the element held here is already off the page by then
+        var slow = setTimeout(function () {
+            var row = _bodyEl.querySelector('.fv-fo__row[data-path="' + cssEsc(path) + '"]');
+            var cell = row ? row.querySelector('td') : null;
+            if (!cell || cell.querySelector('.fv-fo__wait')) return;
+            cell.insertAdjacentHTML('beforeend',
+                '<span class="fv-fo__wait">waiting for the disk<i></i><i></i><i></i></span>');
+        }, 400);
+
+        loadDir(path).then(function () { clearTimeout(slow); })
+                     .catch(function () { clearTimeout(slow); });
+    }
+
+    // paths carry quotes and backslashes, which would break out of the selector
+    function cssEsc(v) {
+        return String(v).replace(/["\\]/g, '\\$&');
+    }
+
+    function measureRow(td, path) {
+        td.textContent = '\u2026';
+        postJson('space_start', { path: path }).then(function (d) {
+            if (!d || !d.ok) { td.textContent = '?'; td.title = d && d.error ? d.error : 'failed'; return; }
+            var t = setInterval(function () {
+                fetchJson('job_status', 'id=' + encodeURIComponent(d.id)).then(function (r) {
+                    var st = r && r.ok && r.status;
+                    if (!st) { clearInterval(t); td.textContent = '?'; return; }
+                    if (st.state === 'running' || st.state === 'queued') return;
+                    clearInterval(t);
+                    if (st.state === 'done') {
+                        _measured[path] = st.bytes || 0;
+                        td.textContent = formatBytes(_measured[path]);
+                    } else {
+                        td.textContent = '?';
+                    }
+                }).catch(function () { clearInterval(t); td.textContent = '?'; });
+            }, 600);
+        });
+    }
+
+    function showFolderOverview() {
+        if (_split || !_bodyEl) return;   // with the list out, the pane waits for a file
+        var h = folderOverviewHtml();
+        if (h) _bodyEl.innerHTML = h;
+    }
+
+    function setSplit(on) {
+        _split = !!on;
+        var g = document.querySelector('.fv-grid');
+        if (g) g.classList.toggle('fv-grid--split', _split);
+        if (_sideBtn) {
+            _sideBtn.setAttribute('aria-pressed', _split ? 'true' : 'false');
+            _sideBtn.title = _split ? 'Hide the folder list' : 'Show the folder list';
+        }
+        // one filter box is visible at a time, so the one taking over inherits the
+        // text. both are held by name: _filterEl is whichever is on screen
+        var from = _split ? _filterWideEl : _filterNarrowEl;
+        var to   = _split ? _filterNarrowEl : _filterWideEl;
+        if (from && to) to.value = from.value;
+        _filterEl = to;
+        sideSet(_split);
+        if (!_previewFile) { _bodyEl.innerHTML = EMPTY_HTML; showFolderOverview(); }
+    }
+
     function clearPreview() {
         resetPaneModes();
         _bodyEl.innerHTML = EMPTY_HTML;
+        showFolderOverview();
         if (_pvTypeEl) {
             _pvTypeEl.textContent = '';
             _pvTypeEl.className = 'fv-preview__type';
@@ -403,6 +538,8 @@
 
     function renderList(data) {
         var entries = data.entries || [];
+        _lastEntries = entries;
+        _lastParent  = (!data.is_root && data.parent) ? data.parent : '';
         _titleEl.textContent = data.root_picker ? 'Roots' : 'Contents';
         _listEl.setAttribute('data-trunc', data.truncated ? '1' : '0');
         _selected = {};                      // a fresh listing starts with nothing ticked
@@ -456,6 +593,7 @@
                     ' items are shown. Use the filter on a narrower folder to see the rest.</div>';
         }
         _listEl.innerHTML = html;
+        if (!_previewFile) showFolderOverview();
         updateOps();
     }
 
@@ -1117,6 +1255,7 @@
                 ? (total ? (total + (trunc ? '+' : '') + ' items') : '')
                 : (shown + ' of ' + total + (trunc ? '+' : ''));
         }
+        if (!_previewFile) showFolderOverview();   // the pane follows the filter too
     }
 
     function visibleItems() {
@@ -1191,6 +1330,17 @@
     // the toolbar file ops act on the ticked rows, not on what is previewed. a
     // new listing clears the selection (renderList resets _selected).
 
+    // both panes read the same selection, so whichever is hidden still agrees
+    function syncListChecks() {
+        var rows = _listEl.querySelectorAll('.fv-item');
+        for (var i = 0; i < rows.length; i++) {
+            var p = rows[i].getAttribute('data-path');
+            var cb = rows[i].querySelector('.fv-rowcb');
+            if (cb) cb.checked = !!_selected[p];
+            rows[i].classList.toggle('selected', !!_selected[p]);
+        }
+    }
+
     function selectedPaths() { return Object.keys(_selected); }
     function selCount() { return selectedPaths().length; }
 
@@ -1236,6 +1386,7 @@
             var cbs = _listEl.querySelectorAll('.fv-rowcb');
             for (var i = 0; i < cbs.length; i++) cbs[i].checked = false;
         }
+        if (!_previewFile) showFolderOverview();   // the tick column follows this switch
         updateSelUi();
         refreshEditBtn();
     }
@@ -1839,7 +1990,7 @@
                 aborter = (typeof AbortController !== 'undefined') ? new AbortController() : null;
                 fetch(apiUrl('upload', ''), {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest' },
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8', 'X-Requested-With': 'XMLHttpRequest', 'X-CSRF-TOKEN': csrfToken() },
                     credentials: 'same-origin',
                     body: body,
                     signal: aborter ? aborter.signal : undefined
@@ -2629,6 +2780,9 @@
         _pvEl      = document.querySelector('.fv-preview');
         _rootEl    = document.querySelector('.fv-wrapper');
         _pvCloseEl = document.getElementById('fv-pv-close');
+        _filterWideEl   = document.getElementById('fv-filter-wide');
+        _filterNarrowEl = document.getElementById('fv-filter-input');
+        _sideBtn      = document.getElementById('fv-op-side');
         _starEl    = document.getElementById('fv-pv-star');
         _favBtn    = document.getElementById('fv-op-fav');
         _favMenuEl = document.getElementById('fv-fav-menu');
@@ -2652,6 +2806,53 @@
         _listEl.addEventListener('click', onListClick);
         _crumbEl.addEventListener('click', onCrumbClick);
         if (_pvCloseEl) _pvCloseEl.addEventListener('click', function () { leaveEditOk(clearPreview); });
+        // clicking a row here does what clicking it in the list does
+        if (_bodyEl) _bodyEl.addEventListener('click', function (e) {
+            if (e.target && e.target.type === 'checkbox') return;   // the tick is not a click on the row
+            var tr = e.target.closest ? e.target.closest('.fv-fo__row') : null;
+            if (!tr) return;
+            if (e.target.classList && e.target.classList.contains('fv-fo__meas')) {
+                var cell = e.target.parentNode;
+                measureRow(cell, tr.getAttribute('data-path'));
+                return;
+            }
+            var path = tr.getAttribute('data-path');
+            if (tr.getAttribute('data-dir') === '1') { openFolderRow(tr, path); return; }
+            var row = findRow(path);
+            if (row) openFile(row);
+        });
+
+        if (_sideBtn) _sideBtn.addEventListener('click', function (e) { e.preventDefault(); setSplit(!_split); });
+        if (_filterWideEl) _filterWideEl.addEventListener('input', applyFilter);
+
+        // the tick column writes into the same selection the list uses, so every
+        // file action keeps working without knowing which pane asked
+        if (_bodyEl) _bodyEl.addEventListener('change', function (e) {
+            var t = e.target;
+            if (!t) return;
+            if (t.id === 'fv-fo-all') {
+                var cbs = _bodyEl.querySelectorAll('.fv-focb');
+                _selected = {};
+                for (var i = 0; i < cbs.length; i++) {
+                    cbs[i].checked = t.checked;
+                    var r = cbs[i].closest('.fv-fo__row');
+                    if (t.checked && r) _selected[r.getAttribute('data-path')] = true;
+                }
+                syncListChecks();
+                updateSelUi();
+                return;
+            }
+            if (t.classList && t.classList.contains('fv-focb')) {
+                var row = t.closest('.fv-fo__row');
+                if (!row) return;
+                var p = row.getAttribute('data-path');
+                if (t.checked) _selected[p] = true; else delete _selected[p];
+                row.classList.toggle('selected', t.checked);
+                syncListChecks();
+                updateSelUi();
+            }
+        });
+
         if (_starEl) _starEl.addEventListener('click', favToggle);
         if (_favBtn) _favBtn.addEventListener('click', function (e) { e.stopPropagation(); favMenuToggle(); });
         if (_favMenuEl) _favMenuEl.addEventListener('click', function (e) {
@@ -2688,6 +2889,7 @@
         document.addEventListener('keydown', onKey);
 
         setMode(false);   // start in preview-only
+        setSplit(sideOn());
         favLoad();
         loadDir(readDir(), true).then(spResume);
     }

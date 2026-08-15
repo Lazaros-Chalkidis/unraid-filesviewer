@@ -7,10 +7,12 @@
 
 // streams raw file bytes for the in-page preview and for raw or download links.
 // all the safety lives in the shared class: path containment, the fixed mime map,
-// and the csrf gate.
+// and the token gate.
 require_once __DIR__ . '/filesviewer_api.php';
 
-if (!FilesViewerEndpoint::validateCsrf()) {
+// this url ends up in <video src> and in download links, so it is gated by our own
+// short lived token rather than the one that unlocks the rest of the webgui
+if (!FilesViewerEndpoint::validateNonce()) {
     http_response_code(403);
     exit;
 }
@@ -49,6 +51,11 @@ header('Content-Disposition: ' . $disposition . '; filename="' . $fname . '"');
 @ini_set('zlib.output_compression', 'Off');
 @set_time_limit(0);                                         // a long media stream must not be cut off
 while (ob_get_level() > 0) ob_end_clean();
+
+// a player that seeks or a preview that closes drops the connection mid stream.
+// without this php is killed on the next write and nginx logs the half finished
+// response as an error, so the loop below is left to notice and stop on its own
+@ignore_user_abort(true);
 
 // head requests want the headers only
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') {
@@ -96,5 +103,6 @@ while ($remaining > 0 && !feof($fh)) {
     echo $buf;
     $remaining -= strlen($buf);
     flush();
+    if (connection_aborted()) break;   // nobody is listening, stop reading the disk
 }
 fclose($fh);

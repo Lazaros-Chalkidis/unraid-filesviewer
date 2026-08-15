@@ -251,14 +251,53 @@
 }
 
 /* ---- two-pane grid -------------------------------------------------------- */
+/* one pane by default. the list slides out from the left instead of appearing,
+   so it reads as the same page widening rather than a new one */
 .fv-grid {
   display: grid;
+  grid-template-columns: 0 1fr;
+  gap: 0;
+  align-items: start;
+  transition: grid-template-columns .22s ease, gap .22s ease;
+}
+.fv-grid.fv-grid--split {
   grid-template-columns: 320px 1fr;
   gap: .85rem;
-  align-items: start;
+}
+.fv-grid > .fv-browser {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transform: translateX(-14px);
+  transition: opacity .18s ease, transform .22s ease;
+}
+.fv-grid.fv-grid--split > .fv-browser { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .fv-grid, .fv-grid > .fv-browser { transition: none; }
+}
+
+/* the wide filter belongs to the single pane, the narrow one to the list */
+.fv-filter--inline { flex: 0 0 190px; margin-right: .6rem; }
+/* the bar is as tall as the buttons in it. the filter matches them, otherwise it
+   is the tallest thing in there and the bar grows in this view only */
+.fv-filter--inline .fv-filter__input {
+  height: 2.1rem !important;
+  min-height: 0 !important;
+  padding: 0 .6rem !important;
+  margin: 0 !important;
+  font-size: 1.05rem !important;
+  line-height: 2.1rem !important;
+}
+.fv-grid--split .fv-filter--inline { display: none; }
+
+/* the sidebar switch sits with the other header icons and borrows their box */
+.fv-header__icons #fv-op-side svg { width: 15px; height: 15px; }
+.fv-wrapper #fv-op-side[aria-pressed="true"] {
+  color: var(--fv-accent) !important;
+  border-color: var(--fv-accent) !important;
 }
 @media (max-width: 820px) {
-  .fv-grid { grid-template-columns: 1fr; }
+  .fv-grid, .fv-grid.fv-grid--split { grid-template-columns: 1fr; }
 }
 
 /* ---- browser -------------------------------------------------------------- */
@@ -338,6 +377,92 @@
 .fv-ico.ebook { background: var(--fv-tint-ebook); color: var(--fv-k-ebook); }
 .fv-ico.font  { background: var(--fv-tint-font);  color: var(--fv-k-font); font-weight: 700; }
 
+/* the folder listing shown in the preview pane when no file is open */
+.fv-fo { padding: .2rem .2rem 1rem; }
+.fv-fo__t {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 1.22rem;
+  line-height: 1.5;
+  color: var(--fv-text-mid);
+}
+/* the header stays put while a long folder scrolls under it */
+.fv-fo__t thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--fv-surface);
+}
+.fv-fo__t th {
+  padding: .6rem .9rem;
+  text-align: left;
+  font-weight: 500;
+  color: var(--fv-text-muted);
+  border-bottom: 1px solid var(--fv-border);
+  white-space: nowrap;
+}
+.fv-fo__t td {
+  padding: .62rem .9rem;
+  border-bottom: 1px solid var(--fv-border-subtle);
+  white-space: nowrap;
+}
+.fv-fo__nm { width: 100%; }
+.fv-fo__t td.fv-fo__nm { color: var(--fv-text); }
+.fv-fo__c { width: 1%; text-align: center; padding-left: 0 !important; padding-right: 1.1rem !important; }
+.fv-fo__row.selected { background: rgba(66,165,245,.10); }
+.fv-fo__r { text-align: right; }
+
+/* three dots lighting up one after the other while a folder opens */
+.fv-fo__wait {
+  margin-left: .7rem;
+  color: var(--fv-text-dim);
+  font-size: .95em;
+}
+.fv-fo__wait i {
+  display: inline-block;
+  width: .28em;
+  height: .28em;
+  margin-left: .22em;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: .2;
+  animation: fv-fo-dot 1.1s infinite;
+}
+.fv-fo__wait i:nth-child(2) { animation-delay: .18s; }
+.fv-fo__wait i:nth-child(3) { animation-delay: .36s; }
+@keyframes fv-fo-dot {
+  0%, 60%, 100% { opacity: .2; }
+  30%           { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fv-fo__wait i { animation: none; opacity: .6; }
+}
+/* offered only where a folder has no size to show, and only when Space is on */
+.fv-fo__meas {
+  padding: 1px 6px !important;
+  margin: 0 !important;
+  border: 1px solid var(--fv-border) !important;
+  border-radius: 3px !important;
+  background: none !important;
+  color: var(--fv-text-dim) !important;
+  font-family: inherit !important;
+  font-size: 1.02rem !important;
+  line-height: 1.4 !important;
+  height: auto !important;
+  min-height: 0 !important;
+  width: auto !important;
+  min-width: 0 !important;
+  cursor: pointer !important;
+}
+.fv-fo__meas:hover { color: var(--fv-text) !important; border-color: var(--fv-border-strong) !important; }
+.fv-fo__row { cursor: pointer; }
+.fv-fo__row--up td { color: var(--fv-text-dim); }
+.fv-fo__none { color: var(--fv-text-dim); text-align: center; padding: 1rem !important; }
+.fv-fo__row:hover { background: var(--fv-bg-subtle); }
+.fv-fo__ico { display: inline-flex; vertical-align: -5px; margin-right: .55rem; color: var(--fv-k-dir); }
+.fv-fo__ico svg { width: 20px; height: 20px; }
+.fv-fo__row[data-dir="0"] .fv-fo__ico { color: var(--fv-text-dim); }
+
 .fv-list-note {
   padding: .9rem;
   font-size: 1.03rem;
@@ -376,8 +501,8 @@
   justify-content: center !important;
   flex: 0 0 auto !important;
   align-self: center !important;
-  width: 2rem !important;
-  height: 2rem !important;
+  width: 1.6rem !important;
+  height: 1.6rem !important;
   min-width: 0 !important;
   min-height: 0 !important;
   padding: 0 !important;
@@ -448,7 +573,7 @@
   display: flex;
   align-items: center;
   gap: .6rem;
-  padding: 0.7rem 1.05rem;
+  padding: 0.5rem 1.05rem;
   border-bottom: 1px solid var(--fv-border-subtle);
 }
 
@@ -945,6 +1070,8 @@
 }
 
 .fv-filter { padding: .5rem .6rem; }
+/* inside the path bar it has the bar's own padding around it already */
+.fv-filter--inline { padding: 0 !important; }
 .fv-filter__input {
   appearance: none !important;
   -webkit-appearance: none !important;
@@ -1333,7 +1460,8 @@
 .fv-wrapper.fv-edit .fv-item__cb { display: flex; }
 /* drawn by the plugin (appearance none), so the official checkbox styling
    cannot resize it. the selector outranks input[type=checkbox] rules */
-.fv-list input.fv-rowcb {
+.fv-list input.fv-rowcb,
+.fv-fo__c input {
   -webkit-appearance: none !important;
   appearance: none !important;
   width: 12px !important;
@@ -1347,10 +1475,14 @@
   cursor: pointer !important;
   display: inline-block !important;
 }
-.fv-list input.fv-rowcb:checked {
+.fv-list input.fv-rowcb:checked,
+.fv-fo__c input:checked {
   background: var(--fv-accent) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23101010' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round'><path d='M4 12.5l5 5 11-11'/></svg>") center / 9px 9px no-repeat !important;
   border-color: var(--fv-accent) !important;
 }
+/* a touch larger than in the list, to sit with the bigger type in the table */
+.fv-fo__c input { width: 14px !important; height: 14px !important; vertical-align: middle !important; }
+
 .fv-item.selected { background: rgba(66,165,245,.08); }
 .fv-wrapper.fv-light .fv-item.selected { background: rgba(66,165,245,.12); }
 

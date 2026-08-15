@@ -44,22 +44,55 @@ final class FilesViewerEndpoint
         // runs as root, so an unverifiable request is refused rather than trusted
         if ($expected === '') return false;
 
-        $sent = '';
-        if (array_key_exists('csrf_token', $_POST)) {
-            $sent = (string)$_POST['csrf_token'];
-        } elseif (array_key_exists('csrf_token', $_GET)) {
-            $sent = (string)$_GET['csrf_token'];
-        } elseif (isset($_SERVER['HTTP_X_CSRF_TOKEN'])) {
-            $sent = (string)$_SERVER['HTTP_X_CSRF_TOKEN'];
+        // dynamix checks POST itself and then unsets both the field and the header,
+        // so nothing is left here to compare and its absence means it never ran
+        if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
+            return function_exists('csrf_terminate');
         }
 
+        // GET is ours. the query string is not read, it ends up in the logs
+        $sent = isset($_SERVER['HTTP_X_CSRF_TOKEN']) ? (string)$_SERVER['HTTP_X_CSRF_TOKEN'] : '';
         if ($sent === '') return false;
         return hash_equals($expected, $sent);  // constant time, no early-exit leak
     }
 
+    // a media src url cannot carry a header, so something has to ride in the query.
+    // ours goes there instead of unraid's, which the logs would then leak.
+
+    private const TOK_DIR = '/tmp/filesviewer/tokens';
+    private const TOK_TTL = 43200;   // 12h, longer than any sitting on the page
+
     public static function generateNonce(): string
     {
-        return bin2hex(random_bytes(8));
+        $tok = bin2hex(random_bytes(16));
+        if (!is_dir(self::TOK_DIR) && !@mkdir(self::TOK_DIR, 0700, true)) return '';
+
+        self::nonceTidy();
+        $f = self::TOK_DIR . '/' . $tok;
+        if (@file_put_contents($f, '') === false) return '';
+        @chmod($f, 0600);
+        return $tok;
+    }
+
+    public static function validateNonce(): bool
+    {
+        $tok = (string)($_GET['_fvt'] ?? $_POST['_fvt'] ?? '');
+        if ($tok === '' || !preg_match('/^[a-f0-9]{32}$/', $tok)) return false;
+
+        $f = self::TOK_DIR . '/' . $tok;   // the name is the whole token, no path parts survive the pattern
+        $m = @filemtime($f);
+        if ($m === false) return false;
+        if ($m < time() - self::TOK_TTL) { @unlink($f); return false; }
+        return true;
+    }
+
+    private static function nonceTidy(): void
+    {
+        $cut = time() - self::TOK_TTL;
+        foreach ((array)@glob(self::TOK_DIR . '/*') as $f) {
+            $m = @filemtime($f);
+            if ($m !== false && $m < $cut) @unlink($f);
+        }
     }
 
     // user-facing config, defaults applied
@@ -246,6 +279,7 @@ final class FilesViewerEndpoint
             $full  = $real . DIRECTORY_SEPARATOR . $name;
             $st    = @stat($full);
             $isDir = ($st !== false) && (($st['mode'] & 0170000) === 0040000);
+            $isLnk = @is_link($full);
             $ext   = $isDir ? '' : self::effectiveExt($name);
 
             $entries[] = [
@@ -257,8 +291,10 @@ final class FilesViewerEndpoint
                 'size'     => ($isDir || $st === false) ? 0 : (int)$st['size'],
                 'mtime'    => $st !== false ? (int)$st['mtime'] : 0,
                 'owner'    => $st !== false ? self::uidName((int)$st['uid']) : '',
+                'group'    => $st !== false ? self::gidName((int)$st['gid']) : '',
                 'perms'    => $st !== false ? self::permStringFull((int)$st['mode']) : '',
                 'mode'     => $st !== false ? self::octalPerms((int)$st['mode']) : '',
+                'link'     => $isLnk,
             ];
         }
 
@@ -292,8 +328,10 @@ final class FilesViewerEndpoint
                 'size'     => 0,
                 'mtime'    => $st !== false ? (int)$st['mtime'] : 0,
                 'owner'    => $st !== false ? self::uidName((int)$st['uid']) : '',
+                'group'    => $st !== false ? self::gidName((int)$st['gid']) : '',
                 'perms'    => $st !== false ? self::permStringFull((int)$st['mode']) : '',
                 'mode'     => $st !== false ? self::octalPerms((int)$st['mode']) : '',
+                'link'     => false,
             ];
         }
         return [

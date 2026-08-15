@@ -1,6 +1,17 @@
 
 # Files Viewer
 
+## Version 2026.08.15
+
+### Added
+- One pane by default. The folder is listed across the whole window with type, size, date, owner, group and mode, and a header that stays put while you scroll. The icon at the top right slides the folder list back out when you want it, and remembers which one you left it on
+- Turning on editing adds a tick column to that listing, so files can be picked for the toolbar actions from either pane
+- Opening a folder that sits on a sleeping disk says so on the row while it waits, instead of looking like the click did nothing
+- Folders in that listing have a Measure button in the size column. It works out what the folder actually holds, the same job the Space button runs, and only for the row you asked about
+
+### Fixed
+- Closing a video or audio preview before it finished left an error in the syslog and kept the disk reading a file nobody was watching. It now stops as soon as the player goes away
+
 ## Version 2026.08.12
 
 ### Fixed

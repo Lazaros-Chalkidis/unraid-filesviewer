@@ -2,12 +2,12 @@
 <!DOCTYPE PLUGIN [
  <!ENTITY name      "filesviewer">
  <!ENTITY author    "Lazaros Chalkidis">
- <!ENTITY version   "2026.08.15">
+ <!ENTITY version   "2026.08.24">
  <!ENTITY branch    "main">
  <!ENTITY gitURL    "https://github.com/Lazaros-Chalkidis/unraid-filesviewer">
  <!ENTITY pluginURL "&gitURL;/releases/download/&version;/&name;-&version;.txz">
  <!ENTITY selfURL   "https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/&branch;/&name;.plg">
- <!ENTITY md5       "510a938503eac7cf75f748a1bda44e8a">
+ <!ENTITY md5       "f74750afec446335cd4764b1523fdb3e">
  <!ENTITY launch    "Settings/FilesViewerSettings">
 ]>
 
@@ -27,6 +27,15 @@ A file browser and manager. Previews files and manages daily tasks. Deletes file
 <![CDATA[
 
 # Files Viewer
+
+## Version 2026.08.24
+
+### Added
+- A short guide covering the parts that are not obvious the first time, in GUIDE.md
+
+### Fixed
+- A greyed out button now says what it is waiting for when you hover it, instead of repeating its own name. Most of them need editing switched on and a file ticked, which was not obvious
+- The plugin could be missing from Tools entirely. It was listed under System Information, a section that only exists if you happen to have another plugin that creates it. It has its own Viewers Suite section now, which is always there
 
 ## Version 2026.08.15
 

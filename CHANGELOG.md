@@ -1,6 +1,15 @@
 
 # Files Viewer
 
+## Version 2026.08.24
+
+### Added
+- A short guide covering the parts that are not obvious the first time, in GUIDE.md
+
+### Fixed
+- A greyed out button now says what it is waiting for when you hover it, instead of repeating its own name. Most of them need editing switched on and a file ticked, which was not obvious
+- The plugin could be missing from Tools entirely. It was listed under System Information, a section that only exists if you happen to have another plugin that creates it. It has its own Viewers Suite section now, which is always there
+
 ## Version 2026.08.15
 
 ### Added

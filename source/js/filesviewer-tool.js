@@ -1368,6 +1368,29 @@
         if (_uploadBtn) _uploadBtn.disabled = !add;
         if (_recycleBtn) _recycleBtn.disabled = !w;
         if (_spaceBtn) _spaceBtn.disabled = !_inFolder;   // read only, works in either mode
+
+        // a greyed out button with its own name on the tooltip tells the user
+        // nothing. say which of the two things is missing instead
+        var need = !w ? 'Turn on editing with the eye icon at the top right'
+                      : (n === 0 ? 'Tick the files you want this to act on' : '');
+        whyOff(_renameBtn, 'Rename', w && n > 1 ? 'Rename works on one file at a time' : need);
+        whyOff(_deleteBtn, 'Delete', need);
+        whyOff(_ownerBtn,  'Change owner', need);
+        whyOff(_permBtn,   'Change permissions', need);
+        whyOff(_copyBtn,   'Copy', need);
+        whyOff(_moveBtn,   'Move', need);
+        whyOff(_createBtn, 'Create', !w ? 'Turn on editing with the eye icon at the top right'
+                                        : (!_inFolder ? 'Open a folder first' : ''));
+        whyOff(_uploadBtn, 'Upload', !w ? 'Turn on editing with the eye icon at the top right'
+                                        : (!_inFolder ? 'Open a folder first' : ''));
+        whyOff(_recycleBtn, 'Recycle Bin', !w ? 'Turn on editing with the eye icon at the top right' : '');
+        whyOff(_dlBtn, 'Download', 'Open a file, or tick a single one');
+        whyOff(_spaceBtn, 'Analyse folder space', 'Open a folder first');
+    }
+
+    function whyOff(btn, label, reason) {
+        if (!btn) return;
+        btn.title = (btn.disabled && reason) ? reason : label;
     }
 
     // header toggle: preview only vs editing allowed. switching drops the selection

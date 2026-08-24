@@ -1,8 +1,6 @@
 # Files Viewer for Unraid
 
-Browse your Unraid shares and disks from a page under Tools, preview files in place, and manage them without leaving the browser. 
-
-Turn on the recycle bin and deletes land in a per-share bin instead of vanishing.
+Browse your Unraid shares and disks from a page under Tools, preview files in place, and manage them without leaving the browser. Turn on the recycle bin and deletes land in a per-share bin instead of vanishing.
 
 <p align="center">
   <img src="https://img.shields.io/github/v/release/Lazaros-Chalkidis/unraid-filesviewer?label=Latest%20Version&color=blue" style="margin: 4px;" />&nbsp;
@@ -20,7 +18,7 @@ It previews the common types in place: images, text and code with syntax highlig
 
 ## Features
 
-- Tools Page: A full-page browser under Tools > Files Viewer. By default the folder fills the window as a table, and the icon at the top right slides out the folder list beside it when you want both. It stays where you left it
+- Tools Page: A full-page browser under Tools > Viewers Suite > Files Viewer. By default the folder fills the window as a table, and the icon at the top right slides out the folder list beside it when you want both. It stays where you left it
 - Rooted at /mnt: Browsing starts at /mnt and stays inside it, so every disk, pool, and share is reachable in one place and nothing above /mnt is
 - Folder table: Name, type, size, modified time, owner, group and mode, with a header that stays put while you scroll. Click a folder to open it, a file to preview it
 - Measure a folder: Folders have no size until something reads them, so the size column offers a Measure button that works out what one holds. It is the same scan the Space button runs, for that folder only, and appears only when Space is turned on
@@ -52,6 +50,11 @@ It previews the common types in place: images, text and code with syntax highlig
 - Remembers your place: Reopens at the folder you were last browsing, which you can turn off
 - Theme-aware: Follows the active Unraid theme, with its own palette for each of Black, White, Azure and Gray rather than one light and one dark
 - Settings Page: Standalone settings at Settings > Files Viewer with browser-native form submission
+
+## Guide
+
+A short walkthrough of the parts that are not obvious the first time, including
+the difference between preview and editing, is in [GUIDE.md](GUIDE.md).
 
 ## Scope and limits
 
@@ -95,7 +98,7 @@ The video is in German. YouTube can auto-translate the subtitles, so you can fol
    https://raw.githubusercontent.com/Lazaros-Chalkidis/unraid-filesviewer/main/filesviewer.plg
    ```
 
-After installing, open Tools > Files Viewer. Tune the behaviour under Settings > Files Viewer.
+After installing, open Tools > Viewers Suite > Files Viewer. Tune the behaviour under Settings > Files Viewer.
 
 **Removing it**
 

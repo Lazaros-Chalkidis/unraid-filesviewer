@@ -404,6 +404,10 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
        class="fv-footer-link"
        target="_blank" rel="noopener">Support</a>
     <span class="fv-footer-sep" aria-hidden="true"></span>
+    <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/blob/main/GUIDE.md"
+       class="fv-footer-link"
+       target="_blank" rel="noopener">Guide</a>
+    <span class="fv-footer-sep" aria-hidden="true"></span>
     <a href="#" id="fvCreditsLink" class="fv-footer-link">Credits</a>
   </div>
   <span class="fv-version-badge">v<?= htmlspecialchars((string)$plugin_version) ?></span>

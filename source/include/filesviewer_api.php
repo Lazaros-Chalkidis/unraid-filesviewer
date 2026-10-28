@@ -152,12 +152,18 @@ final class FilesViewerEndpoint
                 break;
             }
         }
-        if (!$inside) return null;
+        if (!$inside || self::inBin($real)) return null;
 
         if ($mustBe === 'dir'  && !is_dir($real))  return null;
         if ($mustBe === 'file' && !is_file($real)) return null;
 
         return $real;
+    }
+
+    // the bin is managed through its own endpoints only, the browser never sees it
+    public static function inBin(string $real): bool
+    {
+        return basename($real) === self::BIN_DIR || strpos($real . '/', '/' . self::BIN_DIR . '/') !== false;
     }
 
     // which root contains a resolved path, used to clamp the breadcrumb to the root
@@ -273,6 +279,7 @@ final class FilesViewerEndpoint
 
         foreach ($names as $name) {
             if ($name === '.' || $name === '..') continue;
+            if ($name === self::BIN_DIR) continue;
             if (!$showHidden && $name[0] === '.') continue;
             if (++$seen > self::LIST_MAX) break;
 
@@ -982,6 +989,9 @@ final class FilesViewerEndpoint
             $reals[] = $real;
         }
 
+        // the bin lives inside a share, so an item sitting directly under a disk
+        // or pool has nowhere to go. the client warns before it gets here
+        if ($mode === 'trash' && self::binShareRoot($reals[0]) === null) $mode = 'permanent';
         if ($mode === 'trash') return self::opTrash($reals);
 
         @set_time_limit(0);                                // a large tree must not be cut off mid-delete
@@ -1276,9 +1286,6 @@ final class FilesViewerEndpoint
 
         $shareRoot = null;
         foreach ($reals as $real) {
-            if (basename($real) === self::BIN_DIR || strpos($real . '/', '/' . self::BIN_DIR . '/') !== false) {
-                return ['ok' => false, 'error' => 'already in the recycle bin, delete there is permanent'];
-            }
             $sr = self::binShareRoot($real);
             if ($sr === null) return ['ok' => false, 'error' => 'only a permanent delete works at this level'];
             if ($shareRoot === null) $shareRoot = $sr;

@@ -1,6 +1,12 @@
 
 # Files Viewer
 
+## Version 2026.10.28
+
+### Fixed
+- With hidden files switched on, the recycle bin folder itself showed up in the listing like any other folder, and could be opened, renamed or deleted from there. It is kept out of the browser now and only reachable through the Recycle Bin button
+- Deleting something that sits directly under a disk or pool, outside any share, asked to move it to the recycle bin and then refused. The bin lives inside each share, so there is none at that level. The confirmation now says it will be a permanent delete, and goes through
+
 ## Version 2026.08.24
 
 ### Added

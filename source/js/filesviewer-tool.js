@@ -1709,15 +1709,14 @@
     function promptDelete() {
         var paths = selectedPaths();
         if (!paths.length) return;
+        // the bin lives inside a share, an item straight under /mnt/<disk> has none
+        var noBin = paths[0].split('/').filter(Boolean).length < 4;
+        var what  = paths.length === 1 ? '<b>' + esc(baseName(paths[0])) + '</b>' : '<b>' + paths.length + ' items</b>';
         var inner =
-            '<p class="fv-confirm">' + (_recycleOn
-                ? (paths.length === 1
-                    ? 'Move <b>' + esc(baseName(paths[0])) + '</b> to the Recycle Bin?'
-                    : 'Move <b>' + paths.length + ' items</b> to the Recycle Bin?')
-                : ((paths.length === 1
-                    ? 'Permanently delete <b>' + esc(baseName(paths[0])) + '</b>?'
-                    : 'Permanently delete <b>' + paths.length + ' items</b>?') +
-                   ' This cannot be undone.')) +
+            '<p class="fv-confirm">' + (_recycleOn && !noBin
+                ? 'Move ' + what + ' to the Recycle Bin?'
+                : 'Permanently delete ' + what + '? This cannot be undone.' +
+                  (_recycleOn ? ' The recycle bin lives inside each share, and there is none at this level.' : '')) +
             '</p>' +
             '<div class="fv-modal__err" style="display:none"></div>';
         modalOpen('Delete', inner, 'Delete', 'fv-btn--danger', function (ov) {

@@ -30,6 +30,9 @@ know **which** file you mean, so they stay grey until you tick something. The
 exceptions are Create and Upload, which act on the folder you are in and need no
 selection.
 
+When the window is too narrow for the button labels, the buttons show only their
+icons. Hover one for its tooltip.
+
 ## Picking files
 
 With editing on, every row grows a tick box. Tick one for Rename, tick as many as

@@ -97,8 +97,10 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
           <button type="button" class="fv-opbtn" id="fv-op-fav" title="Favourites" aria-haspopup="true" aria-expanded="false"><i class="fa fa-star-o" aria-hidden="true"></i><span>Favourites</span><i class="fa fa-caret-down fv-fav-caret" aria-hidden="true"></i></button>
           <div class="fv-fav-menu" id="fv-fav-menu" role="menu" hidden></div>
         </div>
-        <button type="button" class="fv-opbtn fv-opbtn--danger"   id="fv-op-delete"   title="Delete"><i class="fa fa-trash-o" aria-hidden="true"></i><span>Delete</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--recycle"  id="fv-op-recycle"  title="Recycle Bin"><i class="fa fa-recycle" aria-hidden="true"></i><span>Recycle Bin</span></button>
+        <div class="fv-fileops__end">
+          <button type="button" class="fv-opbtn fv-opbtn--danger"   id="fv-op-delete"   title="Delete"><i class="fa fa-trash-o" aria-hidden="true"></i><span>Delete</span></button>
+          <button type="button" class="fv-opbtn fv-opbtn--recycle"  id="fv-op-recycle"  title="Recycle Bin"><i class="fa fa-recycle" aria-hidden="true"></i><span>Recycle Bin</span></button>
+        </div>
       </div>
     </div>
 
@@ -186,7 +188,26 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
         }
     }
 
-    function apply() { unlockAncestors(); fitHeight(); }
+    // Show icons when labels would not fit. Measured because theme's font & optional Space button influence needed space
+    var _opsW = -1;
+    function fitToolbar(force) {
+        var ops = document.querySelector('.fv-fileops');
+        if (!ops || !ops.firstElementChild) return;
+        var w = ops.clientWidth;
+        if (!force && w === _opsW) return;
+        _opsW = w;
+        ops.classList.remove('fv-fileops--icons');
+        var first = ops.firstElementChild.getBoundingClientRect();
+        var last  = ops.lastElementChild.getBoundingClientRect();
+        ops.classList.toggle('fv-fileops--icons', last.top > first.top + 2);
+    }
+
+    function apply() { unlockAncestors(); fitHeight(); fitToolbar(true); }
+
+    if (window.ResizeObserver) {
+        var ops = document.querySelector('.fv-fileops');
+        if (ops) new ResizeObserver(function () { fitToolbar(false); }).observe(ops);
+    }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
     else apply();

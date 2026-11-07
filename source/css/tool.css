@@ -155,13 +155,18 @@
 /* file actions, styled like the settings footer buttons (not the unraid default) */
 .fv-fileops {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: .9rem;
+  row-gap: .6rem;
   flex: 1 1 auto;
-  flex-shrink: 0;
+  min-width: 0;   /* without it the row never wraps */
 }
+.fv-fileops > .fv-opbtn,
+.fv-fileops > .fv-fav-wrap { flex-shrink: 0; }
 /* the destructive pair keeps its own corner on the right */
-#fv-op-delete { margin-left: auto !important; }
+.fv-fileops__end { display: inline-flex; align-items: center; gap: .9rem; flex-shrink: 0; margin-left: auto; }
+.fv-fileops--icons .fv-opbtn > span { display: none !important; }
 .fv-opbtn {
   display: inline-flex !important;
   align-items: center !important;

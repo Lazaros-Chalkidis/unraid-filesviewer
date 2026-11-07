@@ -1,6 +1,49 @@
 
 # Files Viewer
 
+## Version 2026.11.07
+
+### Added
+- Compress. Tick files or folders and pack them into a zip or tar.gz next to them, with a name you choose, progress and cancel. The plugin writes both formats itself, streamed, so nothing waits on a tool that gives no feedback. Zip takes files over 4 GB, links are left out, and a cancelled run leaves nothing behind
+- Extract. Open a zip or tar archive, switch editing on, and the button above the listing unpacks it into a new folder named after it, next to it, with progress and cancel. Entries are read one at a time by the plugin itself, anything that would land outside that folder is refused, links are left out, and the files take the owner and permissions of the folder rather than what the archive says. 7z and rar stay listing only, they need tools that stock Unraid does not ship
+- The tool can open with editing already on, from Open in under Browsing in the settings. It still starts in preview only unless you change that
+- A Palette setting under Appearance. The plugin follows the theme chosen in Display Settings, and a custom theme changes the page without touching that, so it came out light on a dark theme. Lock it to dark or light and it matches what you actually see
+- The plugin can be translated. Every string on both pages and in the browser goes through Unraid's own translation layer, and Greek, German and French are in the repo under languages/. Unraid reads plugin translations from its language packs, so they reach users once those packs carry them
+- The table sorts by any column. Click a header to sort by it, click again to flip the direction. The choice is kept in that browser, and the Sorting settings stay the default for the rest
+- Shift-click ticks a range, in the table and in the folder list. With nothing open, Ctrl+A ticks the whole folder, Delete asks to delete what is ticked and F2 renames the one ticked item
+- Download takes more than one item. Tick several files, or a folder, and they come down as one zip streamed straight to the browser, nothing is written on the server first
+- A copy, move, extract, compress or checksum that runs longer than a minute ends with an Unraid notification, so you can leave the page and still learn how it went. It can be switched off under Notifications in the settings
+- Copy path, in the preview bar, puts the path of the open file, or of the folder you are in, on the clipboard
+- Search. The new button in the bar looks through every folder below the one you are in, by part of a name or a pattern like *.mkv, with a running count and Cancel. Results open with a click, and they stay around when you come back from one
+- Which disk. The button in the preview bar names the disk or pool behind the open file or folder, with the drive's identification, device, size, filesystem and temperature as Unraid's Main page shows them. Under /mnt/user it looks for the same path on every disk and pool first, with a click to open the copy it finds; it asks before looking, because a disk that is asleep may wake up, and a file found on more than one disk is called out, since /mnt/user shows only one of them
+- Unraid defaults. One button in the Owner and the Permission dialogs sets nobody:users, folders 777 and files 666 on the ticked items and everything inside them, what New Permissions in Tools does for a whole share, here for what you picked
+- Checksum. With a file open, the button in the preview bar computes its SHA256, SHA1, MD5 or SHA512 in the background with a progress bar and Cancel, copies it with a click, and compares it against one you paste
+- Full screen for images. The button above an open image shows it on the whole screen, and the arrows, the keys or a tap at the sides walk through the other images of the folder in the order you see them. Closing it leaves the last image open in the preview
+- The editor has line numbers, a status line with the cursor position, and find and replace. Ctrl+F opens it, Enter and Shift+Enter step through the matches, Match case is a tick box, Replace and Replace all do what they say. Ctrl+S saves and Tab inserts a tab instead of leaving the editor
+
+### Changed
+- The dialogs are bigger. Their text was a notch smaller than the folder table, now it is the same size, the fields and buttons grew with it, and the panels are wider
+- Space and Search act on the ticked folder when exactly one is ticked, and on the folder you are in otherwise. Before, Space always scanned the folder you were in, whatever was ticked
+- Escape closes the Space and Search panes, the way it closes a preview
+- In the table view the tick box sits before the name, where the eye lands first, instead of after it
+- The sidebar and the table agree on what is ticked. Ticking in one updates the other, and the header tick box in the table follows along
+
+### Fixed
+- Extracting an archive that held a single file put that file in a folder named after the file, so zipping a text file and unzipping it again left a folder with the file's name and, after moving the file out, a (1) on it. A single file or folder now comes out as itself, next to the archive, and a name that is taken gets a number instead of a refusal
+- Compress stayed on with only archives ticked and offered to pack a zip into another zip. It is off now, and the tooltip says why
+- The folder list in the Copy and Move dialog, and the sheet tabs of a spreadsheet, picked up Unraid's own button styling: orange borders, capitals and wide letter spacing. They follow the plugin's look now, in both themes
+- The text fields in the dialogs took Unraid's underline style while the drop-downs next to them were boxes. They are all boxes now, and the drop-downs have their arrow back
+- The editor's line numbers took the whole width on Unraid and squeezed the text to a sliver at the right, a side effect of Unraid's own rule for pre blocks. The glyph block of the font preview was framed and set in Unraid's font for the same reason
+- Typing in the folder filter while the Space, Search or Upload pane was open replaced the pane with the folder table, and so did the sidebar toggle
+- Clicking a second file while a slow one was still loading could leave the first file's content in the preview under the second file's name. A late answer is dropped now
+- Leaving the page with unsaved changes in the editor, or with an upload running, asks first
+- A few texts in the progress dialogs were not translated
+- Ticking a file left Open raw and Checksum greyed out, they only looked at the file open in the preview. Both take the ticked file now, and Copy path and Which disk follow a single ticked item too. Wrap still needs an open text preview, and its tooltip says so when it is off
+- Escape in a dialog closed the dialog and, with the same keystroke, the preview behind it
+- When the window is too narrow for the button labels, or a translation runs long, the action bar keeps the icons and drops the labels, and wraps only on a phone, instead of cutting off Delete and Recycle Bin at the right edge. Thanks to Sebastian Oehm for the fix (pull request #9)
+- The contents of a zip never listed on Unraid, every zip came up as empty. The plugin read the output of unzip and expected the date the way Debian prints it, Slackware prints it the other way round, so every line was dropped. Zip archives are read through PHP's own zip support now, nothing to parse
+- An owner or permission change showed up in the folder list on the left but not in the table, which kept the old values until you left the folder and came back
+
 ## Version 2026.10.28
 
 ### Fixed

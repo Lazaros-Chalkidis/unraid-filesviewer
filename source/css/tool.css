@@ -4,7 +4,6 @@
    License: GPLv3
    ========================================================================= */
 
-/* shared tokens, same values used across the plugin family so the tool matches */
 :root {
   --fv-bg:            #1a1a1a;
   --fv-surface:       #242424;
@@ -25,8 +24,6 @@
   --fv-warn-text:     #ffb443;
   --fv-crit:          #e24b4a;
 
-  /* one entry per action and per file kind. the light themes override the whole
-     set, because a colour that reads well on black washes out on white */
   --fv-k-create: #5cc46a;
   --fv-k-rename: #e0a93a;
   --fv-k-move: #b08ae8;
@@ -37,6 +34,7 @@
   --fv-k-owner: #d072b5;
   --fv-k-perm: #a3b0cc;
   --fv-k-recycle: #8fb84a;
+  --fv-k-compress: #c9975f;
   --fv-k-danger: #e06a6a;
   --fv-k-danger-hi: #e8807f;
   --fv-k-dir: #ecc25b;
@@ -90,7 +88,6 @@
   border-radius: 8px;
 }
 
-/* ---- header --------------------------------------------------------------- */
 .fv-header {
   display: flex;
   align-items: flex-start;
@@ -125,7 +122,6 @@
 .fv-header__icons a .fa   { font-size: 13px !important; line-height: 1 !important; width: auto !important; }
 .fv-wrapper.fv-edit #fv-mode { color: var(--fv-accent) !important; border-color: var(--fv-accent) !important; }
 
-/* ---- breadcrumb ----------------------------------------------------------- */
 .fv-pathbar {
   display: flex;
   align-items: center;
@@ -152,22 +148,24 @@
 .fv-crumb.cur { color: var(--fv-text); font-weight: 600; }
 .fv-crumb-sep { color: var(--fv-text-muted); margin: 0 .3rem; }
 
-/* file actions, styled like the settings footer buttons (not the unraid default) */
 .fv-fileops {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: .9rem;
+  gap: .6rem .9rem;
   flex: 1 1 auto;
-  flex-shrink: 0;
+  min-width: 0;
 }
-/* the destructive pair keeps its own corner on the right */
-#fv-op-delete { margin-left: auto !important; }
+.fv-fileops > .fv-opbtn,
+.fv-fileops > .fv-fav-wrap { flex-shrink: 0; }
+.fv-fileops__end { display: inline-flex; align-items: center; gap: .9rem; flex-shrink: 0; margin-left: auto; }
+.fv-fileops--icons .fv-opbtn > span { display: none !important; }
 .fv-opbtn {
   display: inline-flex !important;
   align-items: center !important;
   gap: .3rem !important;
   padding: 3px 9px !important;
-  margin: 0 !important;   /* the unraid theme spaces buttons apart on its own */
+  margin: 0 !important;
   border-radius: 4px !important;
   cursor: pointer !important;
   font-size: 11px !important;
@@ -201,7 +199,7 @@
   border-color: rgba(224,106,106,.5) !important;
   color: var(--fv-k-danger-hi) !important;
 }
-/* one colour per action, keyed to what it does */
+
 .fv-opbtn--create   { background: rgba(76,175,80,.1) !important;  border-color: rgba(76,175,80,.3) !important;  color: var(--fv-k-create) !important; }
 .fv-opbtn--create:hover   { background: rgba(76,175,80,.2) !important;  border-color: rgba(76,175,80,.5) !important; }
 .fv-opbtn--rename   { background: rgba(224,169,58,.1) !important;  border-color: rgba(224,169,58,.32) !important; color: var(--fv-k-rename) !important; }
@@ -221,10 +219,9 @@
 .fv-opbtn--perm     { background: rgba(148,163,192,.14) !important; border-color: rgba(148,163,192,.36) !important; color: var(--fv-k-perm) !important; }
 .fv-opbtn--perm:hover     { background: rgba(148,163,192,.24) !important; border-color: rgba(148,163,192,.55) !important; }
 .fv-opbtn--recycle  { background: rgba(143,184,74,.13) !important;  border-color: rgba(143,184,74,.34) !important; color: var(--fv-k-recycle) !important; }
+.fv-opbtn--compress { background: rgba(201,151,95,.12) !important;  border-color: rgba(201,151,95,.34) !important; color: var(--fv-k-compress) !important; }
 .fv-opbtn--recycle:hover  { background: rgba(143,184,74,.24) !important;  border-color: rgba(143,184,74,.55) !important; }
-/* plain mode: the per action colours fall back to the base look, the one the
-   Space button already has. active and disabled keep their own styling, and
-   delete and recycle bin keep theirs because there the colour is a warning */
+
 .fv-btn-plain .fv-fileops .fv-opbtn:not(.active):not(:disabled):not(.fv-opbtn--danger):not(.fv-opbtn--recycle) {
   background: var(--fv-bg-subtle) !important;
   border-color: var(--fv-border) !important;
@@ -250,9 +247,6 @@
   transform: none !important;
 }
 
-/* ---- two-pane grid -------------------------------------------------------- */
-/* one pane by default. the list slides out from the left instead of appearing,
-   so it reads as the same page widening rather than a new one */
 .fv-grid {
   display: grid;
   grid-template-columns: 0 1fr;
@@ -276,10 +270,8 @@
   .fv-grid, .fv-grid > .fv-browser { transition: none; }
 }
 
-/* the wide filter belongs to the single pane, the narrow one to the list */
 .fv-filter--inline { flex: 0 0 190px; margin-right: .6rem; }
-/* the bar is as tall as the buttons in it. the filter matches them, otherwise it
-   is the tallest thing in there and the bar grows in this view only */
+
 .fv-filter--inline .fv-filter__input {
   height: 2.1rem !important;
   min-height: 0 !important;
@@ -290,7 +282,6 @@
 }
 .fv-grid--split .fv-filter--inline { display: none; }
 
-/* the sidebar switch sits with the other header icons and borrows their box */
 .fv-header__icons #fv-op-side svg { width: 15px; height: 15px; }
 .fv-wrapper #fv-op-side[aria-pressed="true"] {
   color: var(--fv-accent) !important;
@@ -300,7 +291,6 @@
   .fv-grid, .fv-grid.fv-grid--split { grid-template-columns: 1fr; }
 }
 
-/* ---- browser -------------------------------------------------------------- */
 .fv-browser {
   background: var(--fv-bg-subtle);
   border: 1px solid var(--fv-border);
@@ -336,11 +326,9 @@
 .fv-item__name  { font-size: 1.22rem; color: var(--fv-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .fv-item__sub   { display: flex; align-items: baseline; font-size: 1.03rem; color: var(--fv-text-muted); }
 
-/* size, mode and date have a bounded width, the owner is the only field that can
-   be anything, so it is the one that gives way instead of wrapping the row */
 .fv-sub__cell  { flex: none; white-space: nowrap; }
 .fv-sub__owner { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-/* the separator sits at the start of the next cell, so a clipped owner keeps it */
+
 .fv-sub__cell + .fv-sub__cell::before { content: '\00b7'; padding: 0 .42em; }
 
 .fv-ico {
@@ -377,7 +365,6 @@
 .fv-ico.ebook { background: var(--fv-tint-ebook); color: var(--fv-k-ebook); }
 .fv-ico.font  { background: var(--fv-tint-font);  color: var(--fv-k-font); font-weight: 700; }
 
-/* the folder listing shown in the preview pane when no file is open */
 .fv-fo { padding: .2rem .2rem 1rem; }
 .fv-fo__t {
   width: 100%;
@@ -386,7 +373,7 @@
   line-height: 1.5;
   color: var(--fv-text-mid);
 }
-/* the header stays put while a long folder scrolls under it */
+
 .fv-fo__t thead th {
   position: sticky;
   top: 0;
@@ -408,11 +395,17 @@
 }
 .fv-fo__nm { width: 100%; }
 .fv-fo__t td.fv-fo__nm { color: var(--fv-text); }
-.fv-fo__c { width: 1%; text-align: center; padding-left: 0 !important; padding-right: 1.1rem !important; }
+.fv-fo__h { cursor: pointer; user-select: none; }
+.fv-fo__h:hover { color: var(--fv-text); }
+.fv-fo__h--on { color: var(--fv-text); }
+.fv-fo__arr { display: inline-block; width: 1em; margin-left: .2em; font-style: normal; text-align: center; opacity: 0; }
+.fv-fo__h:hover .fv-fo__arr { opacity: .45; }
+.fv-fo__h--on .fv-fo__arr { opacity: 1; color: var(--fv-accent); }
+.fv-fo__r .fv-fo__arr { margin-left: .2em; }
+.fv-fo__t .fv-fo__c { width: 1%; text-align: center; padding-right: 0; }
 .fv-fo__row.selected { background: rgba(66,165,245,.10); }
 .fv-fo__r { text-align: right; }
 
-/* three dots lighting up one after the other while a folder opens */
 .fv-fo__wait {
   margin-left: .7rem;
   color: var(--fv-text-dim);
@@ -437,7 +430,7 @@
 @media (prefers-reduced-motion: reduce) {
   .fv-fo__wait i { animation: none; opacity: .6; }
 }
-/* offered only where a folder has no size to show, and only when Space is on */
+
 .fv-fo__meas {
   padding: 1px 6px !important;
   margin: 0 !important;
@@ -480,7 +473,6 @@
 }
 .fv-error { color: var(--fv-warn-text); }
 
-/* ---- preview pane --------------------------------------------------------- */
 .fv-preview {
   position: relative;
   background: var(--fv-bg-subtle);
@@ -491,10 +483,7 @@
   display: flex;
   flex-direction: column;
 }
-/* the star toggles the path in the crumbs: outline when it is not a favourite,
-   filled when it is */
-/* !important throughout: the unraid theme paints every bare button orange with a
-   border, the same reason the other buttons here carry it */
+
 .fv-star {
   display: inline-flex !important;
   align-items: center !important;
@@ -516,8 +505,7 @@
   font-family: inherit !important;
   color: var(--fv-accent) !important;
 }
-/* the viewBox is cropped to the drawing, so the glyph fills the button and the
-   gap either side matches the buttons next to it */
+
 .fv-star svg { width: 100% !important; height: 100% !important; }
 .fv-star[aria-pressed="true"] svg { fill: var(--fv-accent); }
 .fv-star:disabled { opacity: .35; cursor: default; }
@@ -537,8 +525,7 @@
   border-radius: 4px;
   box-shadow: 0 6px 20px rgba(0,0,0,.5);
 }
-/* same reason as the star, plus text-transform because a file name has to keep
-   the case it has on disk */
+
 .fv-fav-item {
   display: flex !important;
   align-items: center !important;
@@ -577,7 +564,6 @@
   border-bottom: 1px solid var(--fv-border-subtle);
 }
 
-/* close button, sits in the preview header after the action buttons */
 .fv-preview__bodywrap { position: relative; flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
 .fv-pv-close {
   display: none !important;
@@ -601,7 +587,7 @@
   font-family: inherit !important;
   transition: background .15s ease !important;
 }
-/* fixed square, centered on the row so it sits level with wrap and open raw */
+
 .fv-pv-close svg { width: 1rem !important; height: 1rem !important; display: block !important; }
 .fv-preview--active .fv-pv-close { display: inline-flex !important; }
 .fv-pv-close:hover { background: #cf4140 !important; }
@@ -630,7 +616,6 @@
 .fv-preview__type.fv-pt-font  { background: var(--fv-tint-font);  color: var(--fv-k-font); border-color: transparent; }
 .fv-preview__body { flex: 1 1 auto; min-height: 0; overflow-x: hidden; overflow-y: auto; position: relative; }
 
-/* ---- empty state ---------------------------------------------------------- */
 .fv-empty {
   height: 100%;
   min-height: 50vh;
@@ -642,7 +627,6 @@
 .fv-empty__icon { font-size: 2.6rem; color: var(--fv-text-muted); }
 .fv-empty p { margin: 0; font-size: 1.22rem; }
 
-/* ---- metadata card -------------------------------------------------------- */
 .fv-meta {
   padding: 2.4rem 1.6rem;
   display: flex; flex-direction: column;
@@ -679,7 +663,6 @@
 .fv-meta__table span:first-child { color: var(--fv-text-muted); }
 .fv-meta__table span:last-child  { color: var(--fv-text); font-family: monospace; font-size: 1.13rem; text-align: right; word-break: break-all; }
 
-/* ---- loading -------------------------------------------------------------- */
 .fv-loading {
   display: flex; flex-direction: column; align-items: center;
   justify-content: center; gap: .6rem; padding: 2rem 1rem;
@@ -699,7 +682,6 @@
 }
 .fv-loading__text { font-size: 1.15rem; color: var(--fv-text-muted); }
 
-/* scrollbars: solid grey thumb (no white-alpha, so a Firefox hover stays grey) */
 .fv-list,
 .fv-preview__body,
 .fv-code { scrollbar-width: thin; scrollbar-color: #555 transparent; }
@@ -712,7 +694,6 @@
 .fv-list::-webkit-scrollbar-thumb:hover,
 .fv-preview__body::-webkit-scrollbar-thumb:hover { background: #666; }
 
-/* ---- light theme ---------------------------------------------------------- */
 .fv-wrapper.fv-light {
   --fv-bg:            #f1f2f4;
   --fv-surface:       #ffffff;
@@ -735,6 +716,7 @@
   --fv-k-owner: #c23499;
   --fv-k-perm: #5570a9;
   --fv-k-recycle: #5b7a28;
+  --fv-k-compress: #8a5a1f;
   --fv-k-danger: #dc1f1f;
   --fv-k-danger-hi: #de1b19;
   --fv-k-dir: #916907;
@@ -755,9 +737,6 @@
 .fv-wrapper.fv-light .fv-panel { background: rgba(0,0,0,.02); }
 .fv-wrapper.fv-light .fv-item.active { background: rgba(66,165,245,.14); }
 
-/* gray is the second dark theme: the unraid page behind us is lighter than black,
-   so the surfaces lift to match instead of sitting in a hole. same values the
-   settings page already uses */
 .fv-wrapper.fv-theme-gray {
   --fv-bg:            #2c2c2c;
   --fv-surface:       #353535;
@@ -777,8 +756,6 @@
   --fv-k-danger: #e58383;
 }
 
-/* azure is a light theme with a blue cast, so the surfaces carry the same cast
-   rather than sitting as pure white on a tinted page */
 .fv-wrapper.fv-theme-azure {
   --fv-bg:            #eef3f8;
   --fv-surface:       #f5f8fb;
@@ -790,15 +767,10 @@
 }
 .fv-wrapper.fv-theme-azure .fv-filter__input { background: #fbfdff !important; }
 
-/* ============================================================================
-   Preview content (Phase B): images, text/code, markdown
-   ========================================================================= */
-
-/* toolbar in the preview head */
 .fv-preview__tools { margin-left: auto; display: flex; gap: .35rem; flex-wrap: wrap; }
 .fv-pv-actions { display: flex; align-items: center; gap: .9rem; flex: 0 0 auto; }
 .fv-pv-actions .fv-opbtn { padding: 3px 5px !important; font-size: .9rem !important; }
-/* sized like the wrap and open raw buttons so the header row reads as one set */
+
 .fv-pv-btn {
   display: inline-flex !important;
   align-items: center !important;
@@ -826,7 +798,6 @@
 .fv-pv-btn:hover  { background: var(--fv-bg-subtle) !important; color: var(--fv-text) !important; }
 .fv-pv-btn.active { background: rgba(66,165,245,.18) !important; border-color: rgba(66,165,245,.5) !important; color: var(--fv-k-pvactive) !important; }
 
-/* banners above a preview */
 .fv-trunc, .fv-note {
   margin: .7rem .9rem 0;
   padding: .5rem .7rem;
@@ -838,7 +809,6 @@
 }
 .fv-note { border-color: var(--fv-border); background: var(--fv-bg-subtle); color: var(--fv-text-mid); }
 
-/* image preview */
 .fv-imgwrap {
   height: 100%;
   min-height: 50vh;
@@ -850,17 +820,14 @@
     linear-gradient(45deg, rgba(255,255,255,.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.03) 75%) 0 0 / 22px 22px,
     linear-gradient(45deg, rgba(255,255,255,.03) 25%, transparent 25%, transparent 75%, rgba(255,255,255,.03) 75%) 11px 11px / 22px 22px;
 }
-/* 1:1 overflow is reached by dragging, never by scrollbars */
+
 .fv-imgwrap.actual  { cursor: grab; }
 .fv-imgwrap.panning { cursor: grabbing; }
 .fv-img.fit { max-width: 100%; max-height: 100%; object-fit: contain; }
 .fv-img     { display: block; margin: auto; border-radius: 4px; }
 
-/* text / code preview */
 .fv-code {
-  /* the only pre on the page, so unraid's global pre styling reaches it and can
-     force width:100% or drop the side margin, pushing the box past the right edge.
-     pin width and margin so both sides stay even */
+
   width: auto !important;
   max-width: 100%;
   margin: .7rem .9rem !important;
@@ -883,8 +850,7 @@
 .fv-code.wrap-off .fv-code__inner { display: inline-block; min-width: 100%; }
 .fv-code.wrap-on  .fv-code__chunk { white-space: pre-wrap; overflow-wrap: anywhere; }
 .fv-code.wrap-off .fv-code__chunk { white-space: pre; }
-/* skip off-screen chunks for speed, but only while wrapped. paint containment
-   from content-visibility clips long unwrapped lines and kills the scroll */
+
 .fv-code--big.wrap-on .fv-code__chunk {
   content-visibility: auto;
   contain-intrinsic-size: auto 8000px;
@@ -895,7 +861,6 @@
 .fv-code::-webkit-scrollbar-thumb:hover { background: #666; }
 .fv-code code { font-family: inherit; background: none; padding: 0; }
 
-/* markdown render */
 .fv-md {
   padding: 1rem 1.4rem 2rem;
   font-size: 1.29rem;
@@ -938,7 +903,6 @@
 .fv-md img { max-width: 100%; border-radius: 4px; }
 .fv-md hr { border: 0; border-top: 1px solid var(--fv-border); margin: 1.4em 0; }
 
-/* ---- highlight.js token colours, written on the family palette ----------- */
 .fv-code .hljs, .fv-md pre code.hljs { color: var(--fv-text); background: transparent; }
 .hljs-comment, .hljs-quote { color: #7d8590; font-style: italic; }
 .hljs-keyword, .hljs-selector-tag, .hljs-built_in, .hljs-name, .hljs-tag { color: #79b8ff; }
@@ -968,10 +932,6 @@
     linear-gradient(45deg, rgba(0,0,0,.04) 25%, transparent 25%, transparent 75%, rgba(0,0,0,.04) 75%) 11px 11px / 22px 22px;
 }
 
-/* ============================================================================
-   Media players (Phase C)
-   ========================================================================= */
-
 .fv-mediawrap {
   height: 100%;
   min-height: 0;
@@ -983,8 +943,7 @@
   overflow: hidden;
 }
 .fv-mediawrap--audio { justify-content: center; }
-/* the box takes the whole pane, the element fills the box, contain letterboxes
-   the frame. host css cannot crop or shrink the picture through any of it */
+
 .fv-videobox { position: relative; flex: 1 1 auto; min-height: 0; width: 100%; }
 .fv-video {
   position: absolute;
@@ -1005,10 +964,6 @@
   max-width: 100%;
 }
 
-/* ============================================================================
-   PDF and archive listing (Phase D)
-   ========================================================================= */
-
 .fv-pdfwrap { height: 80vh; }
 .fv-pdf {
   width: 100%;
@@ -1019,6 +974,10 @@
 }
 
 .fv-arch-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .8rem;
   margin: .7rem .9rem 0;
   padding: .5rem .7rem;
   font-size: 1.07rem;
@@ -1055,10 +1014,6 @@
   flex-shrink: 0;
 }
 
-/* ============================================================================
-   Polish (Phase E): filter, refresh, keyboard highlight, version badge
-   ========================================================================= */
-
 .fv-header__ver {
   font-size: 0.86rem; font-weight: 600; letter-spacing: .3px;
   color: var(--fv-text-muted);
@@ -1070,7 +1025,7 @@
 }
 
 .fv-filter { padding: .5rem .6rem; }
-/* inside the path bar it has the bar's own padding around it already */
+
 .fv-filter--inline { padding: 0 !important; }
 .fv-filter__input {
   appearance: none !important;
@@ -1091,8 +1046,6 @@
 
 .fv-light .fv-filter__input { background: #fff !important; }
 
-/* fixed height: only the panes scroll, the page stays put. height tracks the
-   viewport with a floor for short screens. narrow screens stack and flow. */
 .fv-panel {
   display: flex;
   flex-direction: column;
@@ -1125,7 +1078,6 @@
 }
 .fv-pdfwrap { height: 100%; }
 
-/* tablet and phone: drop the fixed height, stack the panes, let the page scroll */
 @media (max-width: 820px) {
   .fv-panel { height: auto; min-height: 0; }
   .fv-grid {
@@ -1146,15 +1098,9 @@
   .fv-opbtn .fa { font-size: 12px !important; }
 }
 
-/* link text never shows an underline anywhere in the tool, hover included */
 .fv-wrapper a,
 .fv-wrapper a:hover { text-decoration: none; }
 
-/* ============================================================================
-   Rich previews: tables, database, spreadsheet, document, font, e-book (Phase F)
-   ========================================================================= */
-
-/* shared scrollable table used by csv, sqlite and xlsx views */
 .fv-tablewrap, .fv-csvwrap {
   margin: .7rem .9rem;
   border: 1px solid var(--fv-border);
@@ -1187,14 +1133,12 @@
 }
 .fv-table tbody tr:nth-child(even) td { background: rgba(255,255,255,.025); }
 .fv-light .fv-table tbody tr:nth-child(even) td { background: rgba(0,0,0,.025); }
-/* the thumb is a white wash, invisible on a light page */
+
 .fv-light .fv-tablewrap::-webkit-scrollbar-thumb,
 .fv-light .fv-csvwrap::-webkit-scrollbar-thumb { background: rgba(0,0,0,.22); }
 .fv-tablewrap::-webkit-scrollbar, .fv-csvwrap::-webkit-scrollbar { width: 9px; height: 9px; }
 .fv-tablewrap::-webkit-scrollbar-thumb, .fv-csvwrap::-webkit-scrollbar-thumb { background: rgba(255,255,255,.18); border-radius: 5px; }
 
-/* sqlite table picker */
-/* sqlite browser: tables list + paged grid (the grid reuses fv-table) */
 .fv-db2 { display: flex; flex-direction: column; gap: .9rem; padding: 1.2rem 1.2rem 1.2rem; }
 .fv-db2-head { font-size: 1.15rem; color: var(--fv-text-mid); }
 .fv-db2-head b { color: var(--fv-text); font-size: 1.22rem; }
@@ -1215,28 +1159,29 @@
 .fv-db2-blob { color: var(--fv-warn-text); }
 .fv-db2-foot { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .fv-db2-page { display: flex; gap: .45rem; }
-/* grid state: a definite height chain so the table scrolls inside the pane and
-   its horizontal bar stays pinned in view instead of below all the rows */
+
 .fv-db2--grid { height: 100%; box-sizing: border-box; }
 .fv-db2 .fv-tablewrap { margin: 0; }
 .fv-db2--grid .fv-tablewrap { flex: 1 1 auto; min-height: 0; max-height: none; }
 
-/* spreadsheet with sheet tabs */
 .fv-sheet { display: flex; flex-direction: column; height: 100%; }
 .fv-sheet__tabs {
   display: flex; flex-wrap: wrap; gap: .35rem;
   padding: .7rem .9rem .2rem;
 }
-.fv-sheet__tab {
-  background: var(--fv-surface2); color: var(--fv-text-mid);
-  border: 1px solid var(--fv-border); border-radius: 5px;
-  padding: .3rem .7rem; font-size: 1.08rem; cursor: pointer;
+.fv-sheet .fv-sheet__tab {
+  margin: 0 !important; padding: .3rem .7rem !important; min-width: 0 !important; min-height: 0 !important;
+  border: 1px solid var(--fv-border) !important; border-radius: 5px !important;
+  background: var(--fv-surface2) !important; color: var(--fv-text-mid) !important;
+  font-family: inherit !important; font-size: 1.08rem !important; font-weight: 500 !important; line-height: 1.4 !important;
+  letter-spacing: normal !important; text-transform: none !important;
+  cursor: pointer !important;
 }
-.fv-sheet__tab.active { color: var(--fv-text); border-color: var(--fv-accent); }
+.fv-sheet .fv-sheet__tabs .fv-sheet__tab:hover { background: var(--fv-bg-subtle) !important; color: var(--fv-text) !important; }
+.fv-sheet .fv-sheet__tabs .fv-sheet__tab.active { color: var(--fv-text) !important; border-color: var(--fv-accent) !important; }
 .fv-sheet .fv-tablewrap { flex: 1 1 auto; min-height: 0; max-height: none; margin-top: .5rem; }
 .fv-sheet .fv-table td:empty::after { content: ''; }
 
-/* word document, rendered html */
 .fv-doc {
   margin: .7rem .9rem;
   padding: 1.6rem 1.9rem;
@@ -1256,7 +1201,6 @@
 .fv-doc td, .fv-doc th { border: 1px solid var(--fv-border); padding: .35rem .6rem; }
 .fv-doc img { max-width: 100%; height: auto; }
 
-/* font specimen */
 .fv-font {
   margin: .7rem .9rem;
   padding: 1.4rem 1.6rem;
@@ -1269,14 +1213,13 @@
   color: var(--fv-text);
 }
 .fv-font__glyphs {
-  margin: 0 0 1.2rem; padding: 0 0 1.1rem;
-  border-bottom: 1px solid var(--fv-border-subtle);
-  font-size: 1.5rem; line-height: 1.5;
+  width: auto; margin: 0 0 1.2rem; padding: 0 0 1.1rem;
+  border: 0; border-bottom: 1px solid var(--fv-border-subtle);
+  font: inherit; font-size: 1.5rem; line-height: 1.5;
   white-space: pre-wrap; word-break: break-word;
 }
 .fv-font__line { margin: .25rem 0; line-height: 1.35; }
 
-/* e-book reader */
 .fv-ebook { display: flex; flex-direction: column; height: 100%; }
 .fv-ebook__view {
   flex: 1 1 auto; min-height: 0;
@@ -1292,7 +1235,6 @@
 }
 .fv-ebook__nav .fv-pv-btn { padding: 6px 16px; font-size: 1.12rem; }
 
-/* ---- modal dialogs (create, rename, delete) ------------------------------ */
 .fv-modal {
   position: fixed;
   inset: 0;
@@ -1303,7 +1245,7 @@
   background: rgba(0,0,0,.55);
   padding: 1rem;
 }
-/* the overlay sits on the body, so it carries the light tokens itself */
+
 .fv-modal.fv-light {
   --fv-surface:       #ffffff;
   --fv-surface2:      #f6f7f9;
@@ -1325,6 +1267,7 @@
   --fv-k-owner: #c23499;
   --fv-k-perm: #5570a9;
   --fv-k-recycle: #5b7a28;
+  --fv-k-compress: #8a5a1f;
   --fv-k-danger: #dc1f1f;
   --fv-k-danger-hi: #de1b19;
   --fv-k-dir: #916907;
@@ -1343,8 +1286,6 @@
   --fv-k-pvactive: #006ce1;
 }
 
-/* these two follow the light block on purpose: azure also carries fv-light and
-   would otherwise be repainted pure white by it */
 .fv-modal.fv-theme-gray {
   --fv-surface:       #353535;
   --fv-surface2:      #3d3d3d;
@@ -1372,7 +1313,7 @@
 }
 .fv-modal__panel {
   width: 100%;
-  max-width: 420px;
+  max-width: 540px;
   background: var(--fv-surface);
   border: 1px solid var(--fv-border-strong);
   border-radius: 8px;
@@ -1380,52 +1321,61 @@
   overflow: hidden;
 }
 .fv-modal__head {
-  padding: .8rem 1rem;
-  font-size: 1.15rem;
+  padding: .9rem 1.2rem;
+  font-size: 1.45rem;
   font-weight: 600;
   color: var(--fv-text);
   border-bottom: 1px solid var(--fv-border);
   text-transform: uppercase;
   letter-spacing: .5px;
 }
-.fv-modal__body { padding: 1rem; color: var(--fv-text-mid); font-size: 1.05rem; }
+.fv-modal__body { padding: 1.2rem; color: var(--fv-text-mid); font-size: 1.3rem; line-height: 1.45; }
 .fv-modal__foot {
   display: flex;
   justify-content: flex-end;
-  gap: .5rem;
-  padding: .7rem 1rem;
+  gap: .6rem;
+  padding: .8rem 1.2rem;
   border-top: 1px solid var(--fv-border);
   background: var(--fv-bg-subtle);
 }
-.fv-field { display: block; margin-bottom: .8rem; }
-.fv-field > span { display: block; margin-bottom: .3rem; font-size: .95rem; color: var(--fv-text-dim); }
-.fv-input {
+.fv-field { display: block; margin-bottom: .9rem; }
+.fv-field > span { display: block; margin-bottom: .35rem; font-size: 1.15rem; color: var(--fv-text-dim); }
+.fv-wrapper .fv-input, .fv-modal .fv-input {
   width: 100%;
+  min-height: 0;
+  margin: 0;
   box-sizing: border-box;
-  padding: .5rem .6rem;
+  padding: .55rem .7rem;
   background: var(--fv-surface2);
   border: 1px solid var(--fv-border-strong);
   border-radius: var(--fv-radius);
+  box-shadow: none;
   color: var(--fv-text);
   font-family: inherit;
-  font-size: 1.05rem;
+  font-size: 1.3rem;
+  line-height: normal;
+  text-indent: 0;
 }
-.fv-input:focus { outline: none; border-color: var(--fv-accent); }
-.fv-radio { display: flex; gap: 1.2rem; font-size: 1.02rem; color: var(--fv-text-mid); }
+.fv-wrapper .fv-input:focus, .fv-modal .fv-input:focus { outline: none; border-color: var(--fv-accent); background: var(--fv-surface2); }
+.fv-namext { display: flex; gap: .4rem; }
+.fv-namext input { flex: 1 1 auto; min-width: 0; }
+.fv-namext select { flex: 0 0 auto; width: auto; }
+.fv-namext__ext { flex: 0 0 auto; align-self: center; color: var(--fv-text-dim); font-size: 1.3rem; }
+.fv-radio { display: flex; gap: 1.2rem; font-size: 1.25rem; color: var(--fv-text-mid); }
 .fv-radio label { display: inline-flex; align-items: center; gap: .35rem; cursor: pointer; }
 .fv-confirm { margin: 0; line-height: 1.45; }
 .fv-confirm b { color: var(--fv-text); word-break: break-all; }
-.fv-modal__err { margin-top: .7rem; color: var(--fv-warn-text); font-size: .98rem; }
+.fv-modal__err { margin-top: .7rem; color: var(--fv-warn-text); font-size: 1.2rem; }
 
 .fv-btn {
-  padding: .45rem .9rem !important;
-  margin: 0 !important;   /* same reason as the toolbar buttons */
+  padding: .5rem 1rem !important;
+  margin: 0 !important;
   border-radius: var(--fv-radius) !important;
   border: 1px solid var(--fv-border-strong) !important;
   background: var(--fv-bg-subtle) !important;
   color: var(--fv-text) !important;
   font-family: inherit !important;
-  font-size: 1.02rem !important;
+  font-size: 1.2rem !important;
   font-weight: 500 !important;
   cursor: pointer !important;
   transition: background .15s, border-color .15s !important;
@@ -1437,7 +1387,6 @@
 .fv-btn--danger { background: rgba(224,106,106,.14) !important; border-color: rgba(224,106,106,.45) !important; color: var(--fv-k-danger-hi) !important; }
 .fv-btn--danger:hover { background: rgba(224,106,106,.24) !important; }
 
-/* ---- list selection (checkboxes) ----------------------------------------- */
 .fv-listhead {
   display: flex;
   align-items: center;
@@ -1450,16 +1399,15 @@
 .fv-item__cb {
   flex: 0 0 auto;
   width: 16px;
-  order: 3;                 /* sit at the far right, after the grown meta/label */
-  display: none;            /* shown only when editing is allowed */
+  order: 3;
+  display: none;
   align-items: center;
   justify-content: center;
-  align-self: flex-start;   /* ride the title line instead of centering on the whole row */
+  align-self: flex-start;
   margin-top: .3rem;
 }
 .fv-wrapper.fv-edit .fv-item__cb { display: flex; }
-/* drawn by the plugin (appearance none), so the official checkbox styling
-   cannot resize it. the selector outranks input[type=checkbox] rules */
+
 .fv-list input.fv-rowcb,
 .fv-fo__c input {
   -webkit-appearance: none !important;
@@ -1480,30 +1428,67 @@
   background: var(--fv-accent) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23101010' stroke-width='4.5' stroke-linecap='round' stroke-linejoin='round'><path d='M4 12.5l5 5 11-11'/></svg>") center / 9px 9px no-repeat !important;
   border-color: var(--fv-accent) !important;
 }
-/* a touch larger than in the list, to sit with the bigger type in the table */
+
 .fv-fo__c input { width: 14px !important; height: 14px !important; vertical-align: middle !important; }
 
 .fv-item.selected { background: rgba(66,165,245,.08); }
 .fv-wrapper.fv-light .fv-item.selected { background: rgba(66,165,245,.12); }
 
-/* ---- in-place editor ----------------------------------------------------- */
-.fv-editor {
-  width: 100%;
+.fv-ed { display: flex; flex-direction: column; gap: .5rem; }
+.fv-ed__box {
+  display: flex;
   height: 62vh;
   min-height: 320px;
-  box-sizing: border-box;
   resize: vertical;
+  overflow: hidden;
   border: 1px solid var(--fv-border);
   border-radius: var(--fv-radius);
   background: var(--fv-bg);
-  color: var(--fv-text);
   font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+}
+.fv-ed__box:focus-within { border-color: var(--fv-accent); }
+.fv-ed__gutter {
+  flex: 0 0 auto;
+  width: auto;
+  margin: 0;
+  padding: .8rem .6rem .8rem .8rem;
+  overflow: hidden;
+  text-align: right;
+  color: var(--fv-text-dim);
+  background: var(--fv-bg-subtle);
+  border: 0;
+  border-right: 1px solid var(--fv-border-subtle);
+  font: inherit;
+  user-select: none;
+}
+.fv-editor {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+  min-height: 0;
+  height: auto;
+  margin: 0;
+  box-sizing: border-box;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--fv-text);
+  font: inherit;
   padding: .8rem;
   tab-size: 4;
-  white-space: pre-wrap;
-  word-break: break-word;
+  white-space: pre;
+  overflow: auto;
 }
-.fv-editor:focus { outline: none; border-color: var(--fv-accent); }
+.fv-ed__box .fv-editor:focus { outline: none; background: transparent; }
+.fv-ed__find { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; padding: .5rem .6rem; border: 1px solid var(--fv-border); border-radius: var(--fv-radius); background: var(--fv-bg-subtle); }
+.fv-ed__find .fv-input { width: auto; flex: 1 1 160px; min-width: 120px; padding: .3rem .5rem; font-size: 1.2rem; }
+.fv-ed__case { display: inline-flex; align-items: center; gap: .3rem; font-size: 1.15rem; color: var(--fv-text-mid); cursor: pointer; }
+.fv-ed__case input { width: 15px; height: 15px; accent-color: var(--fv-accent); }
+.fv-ed__hits { min-width: 4.5em; font-size: 1.1rem; color: var(--fv-text-dim); text-align: center; }
+.fv-ed__b { padding: 3px 9px !important; font-size: 1.1rem !important; min-width: 0 !important; }
+.fv-ed__x { margin-left: auto; }
+.fv-ed__status { font-size: 1.1rem; color: var(--fv-text-dim); }
 .fv-pv-btn--primary {
   background: rgba(66,165,245,.16) !important;
   border-color: rgba(66,165,245,.45) !important;
@@ -1511,41 +1496,60 @@
 }
 .fv-pv-btn--primary:hover { background: rgba(66,165,245,.26) !important; }
 
-/* ---- owner / permission dialogs ------------------------------------------ */
-.fv-perm { border-collapse: collapse; margin: .2rem 0 .6rem; font-size: 1.05rem; }
-.fv-perm th, .fv-perm td { padding: .25rem .7rem; text-align: center; color: var(--fv-text-mid); }
+.fv-perm { border-collapse: collapse; margin: .2rem 0 .6rem; font-size: 1.25rem; }
+.fv-perm th, .fv-perm td { padding: .3rem .8rem; text-align: center; color: var(--fv-text-mid); }
 .fv-perm th:first-child, .fv-perm td:first-child { text-align: left; color: var(--fv-text); }
-.fv-perm input { width: 16px; height: 16px; accent-color: var(--fv-accent); cursor: pointer; }
-.fv-permline { font-size: 1.02rem; color: var(--fv-text-dim); margin-bottom: .7rem; }
-.fv-permline code { background: var(--fv-bg-subtle); padding: 1px 7px; border-radius: 4px; color: var(--fv-text); font-size: 1.05rem; }
-.fv-check { display: flex; align-items: center; gap: .4rem; font-size: 1.02rem; color: var(--fv-text-mid); cursor: pointer; }
-.fv-check input { width: 15px; height: 15px; accent-color: var(--fv-accent); }
+.fv-perm input { width: 18px; height: 18px; accent-color: var(--fv-accent); cursor: pointer; }
+.fv-permline { font-size: 1.2rem; color: var(--fv-text-dim); margin-bottom: .7rem; }
+.fv-permline code { background: var(--fv-bg-subtle); padding: 1px 7px; border-radius: 4px; color: var(--fv-text); font-size: 1.25rem; }
+.fv-check { display: flex; align-items: center; gap: .5rem; font-size: 1.25rem; color: var(--fv-text-mid); cursor: pointer; }
+.fv-check input { width: 17px; height: 17px; accent-color: var(--fv-accent); }
 .fv-hint { margin: 0 0 .7rem; font-size: .96rem; color: var(--fv-text-dim); }
 
-/* ---- destination picker (phase 4) ---------------------------------------- */
 .fv-pick { display: flex; flex-direction: column; gap: .6rem; }
 .fv-pick-bar { display: flex; align-items: center; gap: .5rem; }
-.fv-pick-up { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 1px solid var(--fv-border); border-radius: 6px; background: var(--fv-surface2); color: var(--fv-text-mid); cursor: pointer; flex: 0 0 auto; }
-.fv-pick-up:hover:not(:disabled) { background: var(--fv-bg-subtle); color: var(--fv-text); }
-.fv-pick-up:disabled { opacity: .4; cursor: default; }
-.fv-pick-path { font-size: .98rem; color: var(--fv-text-mid); word-break: break-all; }
-.fv-pick-list { max-height: 240px; overflow-y: auto; border: 1px solid var(--fv-border); border-radius: 8px; background: var(--fv-surface); }
-.fv-pick-row { display: flex; align-items: center; gap: .55rem; width: 100%; text-align: left; padding: .5rem .7rem; border: 0; border-bottom: 1px solid var(--fv-border-subtle); background: transparent; color: var(--fv-text); font-size: 1.02rem; cursor: pointer; }
-.fv-pick-row:last-child { border-bottom: 0; }
-.fv-pick-row:hover { background: var(--fv-bg-subtle); }
+.fv-modal .fv-pick-up {
+  display: inline-flex !important; align-items: center !important; justify-content: center !important;
+  width: 30px !important; height: 30px !important; min-width: 0 !important; min-height: 0 !important;
+  padding: 0 !important; margin: 0 !important; flex: 0 0 auto !important;
+  border: 1px solid var(--fv-border) !important; border-radius: 6px !important;
+  background: var(--fv-surface2) !important; color: var(--fv-text-mid) !important;
+  cursor: pointer !important;
+}
+.fv-modal .fv-pick-bar .fv-pick-up:hover:not(:disabled) { background: var(--fv-bg-subtle) !important; color: var(--fv-text) !important; }
+.fv-modal .fv-pick-bar .fv-pick-up:disabled, .fv-modal .fv-pick-bar .fv-pick-up:disabled:hover { opacity: .4 !important; cursor: default !important; background: var(--fv-surface2) !important; color: var(--fv-text-mid) !important; }
+.fv-pick-path { font-size: 1.2rem; color: var(--fv-text-mid); word-break: break-all; }
+.fv-pick-list { max-height: 280px; overflow-y: auto; border: 1px solid var(--fv-border); border-radius: 8px; background: var(--fv-surface); }
+.fv-modal .fv-pick-row {
+  display: flex !important; align-items: center !important; gap: .55rem !important;
+  width: 100% !important; min-width: 0 !important; height: auto !important; min-height: 0 !important;
+  margin: 0 !important; padding: .5rem .7rem !important;
+  border: 0 !important; border-bottom: 1px solid var(--fv-border-subtle) !important; border-radius: 0 !important;
+  background: transparent !important; color: var(--fv-text) !important;
+  font-family: inherit !important; font-size: 1.22rem !important; font-weight: 400 !important; line-height: 1.4 !important;
+  letter-spacing: normal !important; text-transform: none !important; text-align: left !important;
+  white-space: normal !important; overflow-wrap: anywhere;
+  cursor: pointer !important;
+}
+.fv-modal .fv-pick-row:last-child { border-bottom: 0 !important; }
+.fv-modal .fv-pick-list .fv-pick-row:hover { background: var(--fv-bg-subtle) !important; color: var(--fv-text) !important; }
 .fv-pick-ico { display: inline-flex; color: var(--fv-accent); }
-.fv-pick-empty { padding: .9rem; text-align: center; color: var(--fv-text-dim); font-size: .98rem; }
+.fv-pick-empty { padding: .9rem; text-align: center; color: var(--fv-text-dim); font-size: 1.2rem; }
 
-/* ---- copy / move progress ------------------------------------------------ */
-.fv-prog { display: flex; flex-direction: column; gap: .55rem; min-width: 320px; }
+.fv-prog { display: flex; flex-direction: column; gap: .6rem; min-width: 320px; }
 .fv-prog-bar { height: 8px; border-radius: 999px; background: var(--fv-bg-subtle); overflow: hidden; }
 .fv-prog-fill { height: 100%; width: 0; background: var(--fv-accent); border-radius: 999px; transition: width .2s linear; }
-.fv-prog-row { display: flex; justify-content: space-between; font-size: 1.0rem; color: var(--fv-text-mid); }
-.fv-prog-sub { font-size: .96rem; color: var(--fv-text-dim); }
-.fv-prog-cur { font-size: .96rem; color: var(--fv-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-/* ---- upload dialog (phase 5) --------------------------------------------- */
-/* in-panel upload (lives in the preview pane, not a popup) - roomy, readable */
+.fv-prog-fill--busy {
+  background: repeating-linear-gradient(90deg, var(--fv-accent) 0 14px, rgba(66,165,245,.35) 14px 28px);
+  animation: fv-busy .9s linear infinite;
+}
+@keyframes fv-busy { to { background-position: 28px 0; } }
+@media (prefers-reduced-motion: reduce) { .fv-prog-fill--busy { animation: none; } }
+.fv-prog-row { display: flex; justify-content: space-between; font-size: 1.2rem; color: var(--fv-text-mid); }
+.fv-prog-sub { font-size: 1.15rem; color: var(--fv-text-dim); }
+.fv-prog-cur { font-size: 1.15rem; color: var(--fv-text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 .fv-uppanel { max-width: 760px; margin: 0 auto; padding: 1.4rem .4rem 2rem; display: flex; flex-direction: column; gap: 1.2rem; }
 .fv-uppanel__title { font-size: 1.4rem; font-weight: 600; color: var(--fv-text); }
 .fv-uppanel__title span { color: var(--fv-text-dim); font-weight: 400; }
@@ -1596,7 +1600,6 @@
 .fv-up2-msg { font-size: 1.25rem; color: var(--fv-text); }
 .fv-up2-failed { font-size: 1.04rem; color: var(--fv-warn-text); margin-top: .3rem; line-height: 1.6; }
 
-/* recycle bin view (lives in the preview pane) */
 .fv-rbpanel { max-width: 820px; margin: 0 auto; padding: 1.2rem .4rem 2rem; display: flex; flex-direction: column; gap: 1rem; }
 .fv-rb-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .fv-rb-title { font-size: 1.4rem; font-weight: 600; color: var(--fv-text); }
@@ -1642,7 +1645,6 @@
 .fv-rb-empty .h { font-size: 1.2rem; color: var(--fv-text-mid); }
 .fv-rb-empty .s { font-size: 1.0rem; }
 
-/* space usage view (lives in the preview pane) */
 .fv-sppanel { max-width: 820px; margin: 0 auto; padding: 1.2rem .4rem 2rem; display: flex; flex-direction: column; gap: .95rem; }
 .fv-sp-top { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
 .fv-sp-title { font-size: 1.4rem; font-weight: 600; color: var(--fv-text); }
@@ -1665,3 +1667,55 @@
 .fv-sp-pct { flex: 0 0 44px; text-align: right; font-size: .92rem; color: var(--fv-text-dim); }
 .fv-sp-row--dim .fv-sp-name, .fv-sp-row--dim .fv-sp-size { color: var(--fv-text-dim); }
 .fv-sp-note { font-size: .95rem; color: var(--fv-text-dim); }
+
+.fv-sr-form { display: flex; gap: .5rem; }
+.fv-sr-form .fv-input { flex: 1 1 auto; min-width: 0; }
+.fv-sr-form .fv-btn { flex: 0 0 auto; }
+.fv-sr-cancel { margin-left: .6rem; padding: 2px 9px !important; font-size: 1rem !important; vertical-align: middle; }
+.fv-sr-in { display: block; font-style: normal; font-size: 1rem; color: var(--fv-text-dim); overflow: hidden; text-overflow: ellipsis; }
+.fv-sr-in::before { content: '\2192  '; }
+.fv-sr-date { flex: 0 0 auto; font-size: 1rem; color: var(--fv-text-dim); }
+.fv-sr-row { align-items: flex-start; }
+.fv-sr-row .fv-sp-glyph { margin-top: 3px; }
+
+.fv-lb { position: fixed; inset: 0; z-index: 10000; background: rgba(0,0,0,.94); display: flex; align-items: center; justify-content: center; user-select: none; }
+.fv-lb__img { max-width: 100%; max-height: 100%; object-fit: contain; transition: opacity .15s; }
+.fv-lb--loading .fv-lb__img { opacity: .35; }
+.fv-lb--broken .fv-lb__img { opacity: 0; }
+.fv-lb__nav { position: absolute; top: 0; bottom: 0; width: 16%; min-width: 72px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.85); cursor: pointer; opacity: 0; transition: opacity .2s; }
+.fv-lb__nav svg { width: 56px; height: 56px; filter: drop-shadow(0 1px 3px rgba(0,0,0,.8)); }
+.fv-lb:hover .fv-lb__nav, .fv-lb__nav:focus { opacity: .7; }
+.fv-lb__nav:hover { opacity: 1; }
+.fv-lb__nav--prev { left: 0; }
+.fv-lb__nav--next { right: 0; }
+.fv-lb__nav--off, .fv-lb:hover .fv-lb__nav--off { opacity: 0; cursor: default; pointer-events: none; }
+.fv-lb__close { position: absolute; top: 10px; right: 14px; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; color: rgba(255,255,255,.85); cursor: pointer; border-radius: 50%; background: rgba(0,0,0,.35); }
+.fv-lb__close svg { width: 24px; height: 24px; }
+.fv-lb__close:hover { color: #fff; background: rgba(255,255,255,.15); }
+.fv-lb__cap { position: absolute; left: 0; right: 0; bottom: 0; display: flex; justify-content: space-between; gap: 1rem; padding: 2.2rem 1.2rem .8rem; background: linear-gradient(rgba(0,0,0,0), rgba(0,0,0,.75)); color: #fff; font-size: 1.3rem; pointer-events: none; }
+.fv-lb__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fv-lb__count { flex: 0 0 auto; color: rgba(255,255,255,.7); }
+@media (hover: none) { .fv-lb__nav { opacity: .7; } }
+
+.fv-modal--wide .fv-modal__panel { max-width: 760px; }
+.fv-defaults { display: flex; align-items: center; justify-content: space-between; gap: .8rem; margin-top: 1rem; padding-top: .9rem; border-top: 1px solid var(--fv-border); font-size: 1.15rem; color: var(--fv-text-dim); }
+.fv-defaults .fv-btn { flex: 0 0 auto; }
+.fv-mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 1.2rem; }
+.fv-hash-ok { color: var(--fv-k-create); }
+.fv-modal .fv-prog { margin: .8rem 0; }
+.fv-modal .fv-sp-line { font-size: 1.2rem; }
+.fv-modal select.fv-input { width: auto; }
+.fv-wrapper select.fv-input, .fv-modal select.fv-input { -webkit-appearance: auto; appearance: auto; padding-right: .5rem; cursor: pointer; }
+.fv-loc { display: flex; flex-direction: column; gap: 6px; margin: .2rem 0 .8rem; }
+.fv-loc__row { display: flex; align-items: center; gap: .9rem; padding: .55rem .8rem; border-radius: 8px; background: var(--fv-surface2); }
+.fv-loc__row--go { cursor: pointer; }
+.fv-loc__row--go:hover { background: var(--fv-bg-subtle); }
+.fv-loc__card { flex: 1 1 auto; min-width: 0; }
+.fv-loc__head { display: flex; align-items: baseline; gap: .5rem; }
+.fv-loc__disk { font-weight: 600; color: var(--fv-text); }
+.fv-loc__tag { font-size: 1rem; text-transform: uppercase; letter-spacing: .04em; color: var(--fv-text-dim); border: 1px solid var(--fv-border); border-radius: 4px; padding: 0 .4rem; }
+.fv-loc__dev { font-size: 1.15rem; color: var(--fv-text-dim); }
+.fv-loc__id { font-size: 1.15rem; color: var(--fv-text-mid); overflow-wrap: anywhere; }
+.fv-loc__meta { flex: 0 0 auto; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.fv-loc__size, .fv-loc__date { font-size: 1.12rem; color: var(--fv-text-dim); }
+.fv-loc__go { color: var(--fv-accent); font-size: 1.2rem; }

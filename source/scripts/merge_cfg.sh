@@ -5,9 +5,6 @@
 # License: GPLv3
 # =========================================================================
 
-# keep the user's existing values, let any new keys in this release stay at default
-# usage: merge_cfg.sh <current_cfg> <backup_cfg>
-
 set -e
 
 CFG="$1"
@@ -39,7 +36,6 @@ awk '
         }
         next
     }
-    # second pass over the default cfg: swap in the saved value where the key exists
     {
         eq = index($0, "=")
         if (eq > 0) {
@@ -48,7 +44,6 @@ awk '
         }
         print
     }
-    # a key the defaults do not carry is still the user setting, an update never drops it
     END {
         for (i = 1; i <= n; i++) if (!(order[i] in seen)) print user[order[i]]
     }

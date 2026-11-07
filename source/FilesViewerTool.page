@@ -16,10 +16,12 @@ require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 require_once '/usr/local/emhttp/plugins/filesviewer/include/filesviewer_api.php';
 
 $cfg = @parse_plugin_cfg('filesviewer', true) ?: [];
+if (function_exists('parse_plugin')) parse_plugin('filesviewer');
 
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
-// the tool only needs light vs dark, not a per-theme palette
+if (($cfg['FV_PALETTE'] ?? '') === 'dark')  $unraid_theme = 'black';
+if (($cfg['FV_PALETTE'] ?? '') === 'light') $unraid_theme = 'white';
 $fv_theme   = in_array($unraid_theme, ['black','white','azure','gray'], true) ? $unraid_theme : 'black';
 $fv_light   = in_array($fv_theme, ['white','azure'], true);
 $themeClass = ' fv-theme-' . $fv_theme;
@@ -29,13 +31,14 @@ $var = @parse_ini_file('/var/local/emhttp/var.ini') ?: [];
 
 $fvCfg = FilesViewerEndpoint::config();
 $monoClass = $fvCfg['btn_colors'] ? '' : ' fv-btn-plain';
-// browsers keep css and js until the url changes, so an update ships new files
-// that nobody loads. the build stamp makes each release its own url.
 $asset_v = trim((string)@file_get_contents('/usr/local/emhttp/plugins/filesviewer/VERSION'));
 if ($asset_v === '') $asset_v = (string)@filemtime(__FILE__);
 $asset_v = '?v=' . rawurlencode($asset_v);
 
+$fv_lang = substr((string)($locale ?? ($_SESSION['locale'] ?? '')), 0, 2);
+
 $tool_config = [
+    'lang'       => $fv_lang,
     'fvToken'    => FilesViewerEndpoint::generateNonce(),
     'csrfToken'  => (string)($var['csrf_token'] ?? ''),
     'lightTheme' => $fv_light,
@@ -48,14 +51,18 @@ $tool_config = [
     'assetV'     => $asset_v,
     'space'      => $fvCfg['space'],
     'roots'      => $fvCfg['roots'],
+    'editDefault'=> $fvCfg['edit_default'],
+    'sort'       => $fvCfg['sort'],
+    'sortDir'    => $fvCfg['sort_dir'],
+    'foldersFirst' => $fvCfg['folders_first'],
 ];
-$tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
+$tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES | JSON_HEX_TAG | JSON_HEX_AMP);
 ?>
 
 <link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/tool.css<?= $asset_v ?>">
 <script>window.filesviewerToolConfig = <?= $tool_config_json ?>;</script>
 
-<div class="fv-wrapper<?= $themeClass . $lightClass . $monoClass ?>">
+<div class="fv-wrapper<?= $themeClass . $lightClass . $monoClass ?>"<?= $fv_lang !== '' ? ' lang="' . htmlspecialchars($fv_lang, ENT_QUOTES) . '"' : '' ?>>
 
   <div class="fv-panel">
 
@@ -65,40 +72,44 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
         <div>
           <h2 class="fv-header__title">Files Viewer</h2>
           <span class="fv-header__sub">
-            <span id="fv-browser-title">Contents</span>
+            <span id="fv-browser-title"><?=_('Contents')?></span>
             <span class="fv-browser__count" id="fv-browser-count"></span>
           </span>
         </div>
       </div>
       <div class="fv-header__right">
         <div class="fv-header__icons">
-          <a href="#" id="fv-op-side" title="Show the folder list" aria-label="Show the folder list" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></a>
-          <a href="#" id="fv-mode" title="Preview only - click to allow editing" aria-label="Toggle editing"><i class="fa fa-fw fa-eye" aria-hidden="true"></i></a>
-          <a href="/Settings/FilesViewerSettings" title="Settings" aria-label="Settings"><i class="fa fa-fw fa-cog" aria-hidden="true"></i></a>
+          <a href="#" id="fv-op-side" title="<?=_('Show the folder list')?>" aria-label="<?=_('Show the folder list')?>" aria-pressed="false"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg></a>
+          <a href="#" id="fv-mode" title="<?=_('Preview only - click to allow editing')?>" aria-label="<?=_('Toggle editing')?>"><i class="fa fa-fw fa-eye" aria-hidden="true"></i></a>
+          <a href="/Settings/FilesViewerSettings" title="<?=_('Settings')?>" aria-label="<?=_('Settings')?>"><i class="fa fa-fw fa-cog" aria-hidden="true"></i></a>
         </div>
       </div>
     </div>
 
     <div class="fv-pathbar">
-      <div class="fv-fileops" role="group" aria-label="File actions">
-        <button type="button" class="fv-opbtn fv-opbtn--create"   id="fv-op-create"   title="Create"><i class="fa fa-plus" aria-hidden="true"></i><span>Create</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--rename"   id="fv-op-rename"   title="Rename"><i class="fa fa-pencil" aria-hidden="true"></i><span>Rename</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--edit"     id="fv-op-edit"     title="Edit"><i class="fa fa-pencil-square-o" aria-hidden="true"></i><span>Edit</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--move"     id="fv-op-move"     title="Move"><i class="fa fa-arrows" aria-hidden="true"></i><span>Move</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--copy"     id="fv-op-copy"     title="Copy"><i class="fa fa-clone" aria-hidden="true"></i><span>Copy</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--owner"    id="fv-op-owner"    title="Change owner"><i class="fa fa-user-o" aria-hidden="true"></i><span>Owner</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--perm"     id="fv-op-perm"     title="Change permissions"><i class="fa fa-lock" aria-hidden="true"></i><span>Permission</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--upload"   id="fv-op-upload"   title="Upload"><i class="fa fa-upload" aria-hidden="true"></i><span>Upload</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--download" id="fv-op-download" title="Download the selected file" disabled><i class="fa fa-download" aria-hidden="true"></i><span>Download</span></button>
+      <div class="fv-fileops" role="group" aria-label="<?=_('File actions')?>">
+        <button type="button" class="fv-opbtn fv-opbtn--create"   id="fv-op-create"   title="<?=_('Create')?>"><i class="fa fa-plus" aria-hidden="true"></i><span><?=_('Create')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--rename"   id="fv-op-rename"   title="<?=_('Rename')?>"><i class="fa fa-pencil" aria-hidden="true"></i><span><?=_('Rename')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--edit"     id="fv-op-edit"     title="<?=_('Edit')?>"><i class="fa fa-pencil-square-o" aria-hidden="true"></i><span><?=_('Edit')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--move"     id="fv-op-move"     title="<?=_('Move')?>"><i class="fa fa-arrows" aria-hidden="true"></i><span><?=_('Move')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--copy"     id="fv-op-copy"     title="<?=_('Copy')?>"><i class="fa fa-clone" aria-hidden="true"></i><span><?=_('Copy')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--owner"    id="fv-op-owner"    title="<?=_('Change owner')?>"><i class="fa fa-user-o" aria-hidden="true"></i><span><?=_('Owner')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--perm"     id="fv-op-perm"     title="<?=_('Change permissions')?>"><i class="fa fa-lock" aria-hidden="true"></i><span><?=_('Permission')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--upload"   id="fv-op-upload"   title="<?=_('Upload')?>"><i class="fa fa-upload" aria-hidden="true"></i><span><?=_('Upload')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--download" id="fv-op-download" title="<?=_('Download')?>" disabled><i class="fa fa-download" aria-hidden="true"></i><span><?=_('Download')?></span></button>
+        <button type="button" class="fv-opbtn fv-opbtn--compress" id="fv-op-compress" title="<?=_('Compress')?>"><i class="fa fa-file-archive-o" aria-hidden="true"></i><span><?=_('Compress')?></span></button>
 <?php if ($fvCfg['space']): ?>
-        <button type="button" class="fv-opbtn" id="fv-op-space" title="Analyse folder space" disabled><i class="fa fa-pie-chart" aria-hidden="true"></i><span>Space</span></button>
+        <button type="button" class="fv-opbtn" id="fv-op-space" title="<?=_('Analyse folder space')?>" disabled><i class="fa fa-pie-chart" aria-hidden="true"></i><span><?=_('Space')?></span></button>
 <?php endif; ?>
+        <button type="button" class="fv-opbtn" id="fv-op-search" title="<?=_('Search below this folder')?>" disabled><i class="fa fa-search" aria-hidden="true"></i><span><?=_('Search')?></span></button>
         <div class="fv-fav-wrap">
-          <button type="button" class="fv-opbtn" id="fv-op-fav" title="Favourites" aria-haspopup="true" aria-expanded="false"><i class="fa fa-star-o" aria-hidden="true"></i><span>Favourites</span><i class="fa fa-caret-down fv-fav-caret" aria-hidden="true"></i></button>
+          <button type="button" class="fv-opbtn" id="fv-op-fav" title="<?=_('Favourites')?>" aria-haspopup="true" aria-expanded="false"><i class="fa fa-star-o" aria-hidden="true"></i><span><?=_('Favourites')?></span><i class="fa fa-caret-down fv-fav-caret" aria-hidden="true"></i></button>
           <div class="fv-fav-menu" id="fv-fav-menu" role="menu" hidden></div>
         </div>
-        <button type="button" class="fv-opbtn fv-opbtn--danger"   id="fv-op-delete"   title="Delete"><i class="fa fa-trash-o" aria-hidden="true"></i><span>Delete</span></button>
-        <button type="button" class="fv-opbtn fv-opbtn--recycle"  id="fv-op-recycle"  title="Recycle Bin"><i class="fa fa-recycle" aria-hidden="true"></i><span>Recycle Bin</span></button>
+        <div class="fv-fileops__end">
+          <button type="button" class="fv-opbtn fv-opbtn--danger"   id="fv-op-delete"   title="<?=_('Delete')?>"><i class="fa fa-trash-o" aria-hidden="true"></i><span><?=_('Delete')?></span></button>
+          <button type="button" class="fv-opbtn fv-opbtn--recycle"  id="fv-op-recycle"  title="<?=_('Recycle Bin')?>"><i class="fa fa-recycle" aria-hidden="true"></i><span><?=_('Recycle Bin')?></span></button>
+        </div>
       </div>
     </div>
 
@@ -106,7 +117,7 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
 
       <div class="fv-browser">
         <div class="fv-filter">
-          <input type="text" id="fv-filter-input" class="fv-filter__input" placeholder="Filter this folder" spellcheck="false" autocomplete="off">
+          <input type="text" id="fv-filter-input" class="fv-filter__input" placeholder="<?=_('Filter this folder')?>" spellcheck="false" autocomplete="off">
         </div>
         <div class="fv-list" id="fv-list" role="list"></div>
       </div>
@@ -114,22 +125,25 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
       <div class="fv-preview">
         <div class="fv-preview__head">
           <div class="fv-filter fv-filter--inline">
-            <input type="text" id="fv-filter-wide" class="fv-filter__input" placeholder="Filter this folder" spellcheck="false" autocomplete="off">
+            <input type="text" id="fv-filter-wide" class="fv-filter__input" placeholder="<?=_('Filter this folder')?>" spellcheck="false" autocomplete="off">
           </div>
-          <nav class="fv-crumbs" id="fv-pv-crumbs" aria-label="Path"></nav>
+          <nav class="fv-crumbs" id="fv-pv-crumbs" aria-label="<?=_('Path')?>"></nav>
           <div class="fv-preview__tools" id="fv-pv-tools"></div>
           <div class="fv-pv-actions" id="fv-pv-actions">
-            <button type="button" class="fv-opbtn" id="fv-op-wrap" title="Toggle line wrapping" disabled><i class="fa fa-align-left" aria-hidden="true"></i><span>Wrap</span></button>
-            <button type="button" class="fv-opbtn" id="fv-op-openraw" title="Open the file in a new tab" disabled><i class="fa fa-external-link" aria-hidden="true"></i><span>Open raw</span></button>
-            <button type="button" class="fv-star" id="fv-pv-star" title="Add to favourites" aria-label="Add to favourites" aria-pressed="false"><svg viewBox="2.7 2.7 18.6 17.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z"/></svg></button>
-            <button type="button" class="fv-pv-close" id="fv-pv-close" title="Close preview" aria-label="Close preview"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
+            <button type="button" class="fv-opbtn" id="fv-op-path" title="<?=_('Copy the path to the clipboard')?>" disabled><i class="fa fa-clipboard" aria-hidden="true"></i><span><?=_('Copy path')?></span></button>
+            <button type="button" class="fv-opbtn" id="fv-op-locate" title="<?=_('Which disk holds this')?>" disabled><i class="fa fa-hdd-o" aria-hidden="true"></i><span><?=_('Which disk')?></span></button>
+            <button type="button" class="fv-opbtn" id="fv-op-hash" title="<?=_('Checksum of the open or ticked file')?>" disabled><i class="fa fa-hashtag" aria-hidden="true"></i><span><?=_('Checksum')?></span></button>
+            <button type="button" class="fv-opbtn" id="fv-op-wrap" title="<?=_('Toggle line wrapping')?>" disabled><i class="fa fa-align-left" aria-hidden="true"></i><span><?=_('Wrap')?></span></button>
+            <button type="button" class="fv-opbtn" id="fv-op-openraw" title="<?=_('Open the file in a new tab')?>" disabled><i class="fa fa-external-link" aria-hidden="true"></i><span><?=_('Open raw')?></span></button>
+            <button type="button" class="fv-star" id="fv-pv-star" title="<?=_('Add to favourites')?>" aria-label="<?=_('Add to favourites')?>" aria-pressed="false"><svg viewBox="2.7 2.7 18.6 17.8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.6l2.6 5.3 5.8.85-4.2 4.1 1 5.75L12 16.9l-5.2 2.7 1-5.75-4.2-4.1 5.8-.85z"/></svg></button>
+            <button type="button" class="fv-pv-close" id="fv-pv-close" title="<?=_('Close preview')?>" aria-label="<?=_('Close preview')?>"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M7 7l10 10M17 7L7 17"/></svg></button>
           </div>
         </div>
         <div class="fv-preview__bodywrap">
           <div class="fv-preview__body" id="fv-pv-body">
             <div class="fv-empty">
               <div class="fv-empty__icon"><i class="fa fa-folder-open-o" aria-hidden="true"></i></div>
-              <p>Select a file to see its details.</p>
+              <p><?=_('Select a file to see its details.')?></p>
             </div>
           </div>
         </div>
@@ -147,9 +161,6 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
 <script defer src="/plugins/filesviewer/js/filesviewer-tool.js<?= $asset_v ?>"></script>
 
 <script>
-// the Tools shell caps page width and height. drop the width cap on our
-// ancestors, then size the panel to the space left below its top edge so only
-// the panes scroll and the page stays put. recomputed on resize.
 (function () {
     'use strict';
 
@@ -168,16 +179,15 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
     function fitHeight() {
         var panel = document.querySelector('.fv-wrapper > .fv-panel');
         if (!panel) return;
-        if (window.innerWidth <= 820) { panel.style.height = ''; return; }   // narrow: let it flow
+        if (window.innerWidth <= 820) { panel.style.height = ''; return; }
 
         var vh = document.documentElement.clientHeight || window.innerHeight;
         var rect = panel.getBoundingClientRect();
-        var absTop = rect.top + window.pageYOffset;   // distance from doc top, immune to current scroll
+        var absTop = rect.top + window.pageYOffset;
         var h = vh - absTop - 28;
         if (h < 360) h = 360;
         panel.style.height = h + 'px';
 
-        // if a footer below still pushes the page past the viewport, trim by the overflow
         var contentH = Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0);
         var over = contentH - vh;
         if (over > 1) {
@@ -186,13 +196,30 @@ $tool_config_json = json_encode($tool_config, JSON_UNESCAPED_SLASHES);
         }
     }
 
-    function apply() { unlockAncestors(); fitHeight(); }
+    var _opsKey = '';
+    function fitToolbar(force) {
+        var ops = document.querySelector('.fv-fileops');
+        if (!ops || !ops.firstElementChild) return;
+        var key = ops.clientWidth + 'x' + ops.clientHeight;
+        if (!force && key === _opsKey) return;
+        ops.classList.remove('fv-fileops--icons');
+        var first = ops.firstElementChild.getBoundingClientRect();
+        var last  = ops.lastElementChild.getBoundingClientRect();
+        ops.classList.toggle('fv-fileops--icons', last.top > first.top + 2);
+        _opsKey = ops.clientWidth + 'x' + ops.clientHeight;
+    }
+
+    function apply() { unlockAncestors(); fitToolbar(true); fitHeight(); }
+
+    if (window.ResizeObserver) {
+        var ops = document.querySelector('.fv-fileops');
+        if (ops) new ResizeObserver(function () { fitToolbar(false); fitHeight(); }).observe(ops);
+    }
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', apply);
     else apply();
     window.addEventListener('load', apply);
     window.addEventListener('resize', apply);
-    // unraid keeps painting after load, so re-measure a few times to settle
     setTimeout(apply, 100);
     setTimeout(apply, 400);
     setTimeout(apply, 800);

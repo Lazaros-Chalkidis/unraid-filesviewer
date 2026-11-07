@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""Builds the mockups the guide points at. Kept as a script so a colour or a
-label can be changed in one place and every picture follows."""
+# ============================================================================
+# FILES VIEWER
+# Copyright (C) 2026 Lazaros Chalkidis
+# License: GPLv3
+# =========================================================================
 
 import os, html
 
@@ -58,9 +61,7 @@ def arrow(x1, y1, x2, y2):
 DEFS = (f'<defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" '
         f'markerHeight="5" orient="auto"><path d="M0 0l10 5-10 5z" fill="{ACCENT}"/></marker></defs>')
 
-
 def toolbar(y, edit_on, ticked, x=14, w=752):
-    """the button row, greyed or live depending on the two conditions"""
     out = box(x, y, w, 33, SURF, BORDER)
     bx = x + 8
     sel = ticked > 0
@@ -77,9 +78,7 @@ def toolbar(y, edit_on, ticked, x=14, w=752):
     out += s
     return out
 
-
 def head(y, edit_on, x=14, w=752):
-    """title strip with the eye / pencil and the layout switch"""
     out = box(x, y, w, 40, SURF, BORDER)
     out += page(x + 12, y + 10, MID)
     out += text(x + 38, y + 19, 'FILES VIEWER', TXT, 12, weight='700')
@@ -102,14 +101,12 @@ def head(y, edit_on, x=14, w=752):
             out += f'<circle cx="{ix+i*26+10.5}" cy="{y+20.5}" r="4.5" fill="none" stroke="{c}" stroke-width="1.4"/>'
     return out
 
-
 def rows(y, items, edit_on, ticks=(), x=14, w=752, cols=True):
-    """the folder table, with or without the tick column"""
     out = box(x, y, w, 26 + len(items) * 26, SURF, BORDER)
-    hx = x + 12
+    hx = x + 12 + (24 if edit_on else 0)
     out += text(hx, y + 17, 'Name', MUTED, 10)
     if edit_on:
-        out += tick(x + w - 300, y + 8, False)
+        out += tick(x + 12, y + 8, False)
     if cols:
         for label, off, anch in [('Type', 272, 'start'), ('Size', 186, 'end'),
                                  ('Modified', 176, 'start'), ('Owner', 62, 'start')]:
@@ -120,7 +117,7 @@ def rows(y, items, edit_on, ticks=(), x=14, w=752, cols=True):
         out += folder(hx, ry + 6) if is_dir else page(hx, ry + 5)
         out += text(hx + 26, ry + 17, name, TXT if is_dir else MID, 11.5)
         if edit_on:
-            out += tick(x + w - 300, ry + 7, i in ticks)
+            out += tick(x + 12, ry + 7, i in ticks)
         if cols:
             out += text(x + w - 272, ry + 17, 'Folder' if is_dir else meta[0], DIM, 10.5)
             out += text(x + w - 186, ry + 17, '' if is_dir else meta[1], DIM, 10.5, 'end')
@@ -129,7 +126,6 @@ def rows(y, items, edit_on, ticks=(), x=14, w=752, cols=True):
         if i < len(items) - 1:
             out += f'<path d="M{x+8} {ry+26}h{w-16}" stroke="{BORDER}" opacity=".5"/>'
     return out
-
 
 FILES = [
     ('appdata', True, ('Folder', '', '2026.08.04 06:11', 'nobody')),
@@ -140,7 +136,6 @@ FILES = [
 os.makedirs(OUT, exist_ok=True)
 made = []
 
-# 1. where it lives in Tools
 b = DEFS
 b += box(14, 14, 752, 26, SURF2, BORDER, 3)
 b += text(26, 31, 'Viewers Suite', TXT, 12, weight='600')
@@ -155,7 +150,6 @@ b += arrow(420, 150, 248, 116)
 b += note(432, 154, 'Tools > Viewers Suite > Files Viewer')
 made.append(('01-where-it-lives.svg', svg(780, 172, b, 'The Viewers Suite section on the Tools page')))
 
-# 2. the eye and the pencil
 b = DEFS + head(14, False)
 b += head(70, True)
 b += note(28, 130, 'Preview only. Nothing you click changes a file.')
@@ -164,7 +158,6 @@ b += arrow(430, 124, 712, 40)
 b += arrow(470, 146, 712, 98)
 made.append(('02-preview-and-editing.svg', svg(780, 162, b, 'The eye icon switches between preview and editing')))
 
-# 3. the three states of the buttons
 b = DEFS
 b += toolbar(14, False, 0)
 b += note(22, 64, 'Preview only: everything is grey')
@@ -174,12 +167,10 @@ b += toolbar(138, True, 2)
 b += note(22, 188, 'Editing on, two files ticked: live')
 made.append(('03-what-wakes-the-buttons.svg', svg(780, 200, b, 'Buttons need editing switched on and a file ticked')))
 
-# 4. picking files
 b = DEFS + head(14, True) + toolbar(60, True, 2) + rows(101, FILES, True, ticks=(1, 2))
 b += note(26, 218, 'Tick a row to pick it. The box in the header takes the lot.')
 made.append(('04-picking-files.svg', svg(780, 232, b, 'Ticking rows selects what the buttons act on')))
 
-# 5. one pane or two
 b = DEFS
 b += box(14, 14, 366, 150, SURF, BORDER)
 b += text(26, 32, 'One pane', MUTED, 10)
@@ -192,7 +183,6 @@ b += text(647, 96, 'preview', DIM, 10.5, 'middle')
 b += note(26, 182, 'The layout icon at the top right slides the folder list in and out.')
 made.append(('05-one-pane-or-two.svg', svg(780, 196, b, 'The single pane and the split view')))
 
-# 6. the recycle bin
 b = DEFS
 b += box(14, 14, 752, 112, SURF, BORDER)
 b += text(28, 34, 'Recycle Bin', TXT, 12, weight='600')
@@ -210,7 +200,6 @@ for i, (name, when) in enumerate([('notes.txt', '2 hours ago  ·  1 item  ·  2 
 b += note(26, 146, 'Off by default, and it only catches deletes made here.')
 made.append(('06-recycle-bin.svg', svg(780, 160, b, 'The recycle bin, with restore and permanent delete')))
 
-# 7. favourites
 b = DEFS
 b += box(14, 14, 752, 32, SURF, BORDER)
 b += text(28, 34, 'Path:  mnt / cache / appdata', MID, 11)
@@ -227,7 +216,6 @@ b += arrow(560, 84, 694, 38)
 b += note(300, 100, 'The star pins whatever the path bar points at.')
 made.append(('07-favourites.svg', svg(780, 154, b, 'Pinning a folder with the star, and the favourites menu')))
 
-# 8. folder sizes
 b = DEFS
 b += box(14, 14, 752, 128, SURF, BORDER)
 b += text(28, 34, 'Space usage', TXT, 12, weight='600')

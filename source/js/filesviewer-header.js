@@ -4,7 +4,6 @@
    License: GPLv3
    ========================================================================= */
 
-// navbar button click handler, opens the tool page
 function FilesViewerButton(){
     location.href = '/Tools/FilesViewerTool';
 }
@@ -14,7 +13,7 @@ function FilesViewerButton(){
 
     function setup(){
         var navItem = document.querySelector('.nav-item.FilesViewerButton');
-        if(!navItem){ setTimeout(setup, 500); return; }  // nav item not in the dom yet, retry shortly
+        if(!navItem){ setTimeout(setup, 500); return; }
 
         var link = navItem.querySelector('a');
         if(!link) return;
@@ -32,7 +31,6 @@ function FilesViewerButton(){
             svg.setAttribute('stroke-linejoin','round');
             svg.setAttribute('class','system');
 
-            // stacked pages, the plugin logo as a line glyph
             var paths = [
                 'M20 7h-3a2 2 0 0 1-2-2V2',
                 'M9 18a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h7l4 4v10a2 2 0 0 1-2 2Z',
@@ -45,7 +43,7 @@ function FilesViewerButton(){
             }
             img.parentNode.replaceChild(svg, img);
 
-            var iconColor = getComputedStyle(link).color || '#ccc';  // tint the glyph to match the navbar text colour
+            var iconColor = getComputedStyle(link).color || '#ccc';
             svg.setAttribute('stroke', iconColor);
         }
     }

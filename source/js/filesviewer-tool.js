@@ -13,22 +13,24 @@
     var _docMaxBytes    = 30 * 1000 * 1000;
     var _ebookMaxBytes  = 60 * 1000 * 1000;
     var _fontMaxBytes   = 15 * 1000 * 1000;
-    var _editMaxBytes   = 2 * 1024 * 1024;   // matches the server edit cap (2 MiB)
+    var _editMaxBytes   = 2 * 1024 * 1024;
     var _autoplay = !!_cfg.autoplay;
-    var _remember = (_cfg.remember !== false);   // default on
-    var _recycleOn = (_cfg.recycle === true);   // off unless the setting says otherwise
+    var _remember = (_cfg.remember !== false);
+    var _recycleOn = (_cfg.recycle === true);
     var _permsFmt = (_cfg.permsFormat === 'symbolic') ? 'symbolic' : 'octal';
     var _roots    = _cfg.roots || [];
 
-    // prefer the token the page injected, fall back to the global unraid sets
+    var T = (typeof window._ === 'function') ? window._ : function (t) { return t; };
+    function tf(t) {
+        var a = arguments, i = 0;
+        return T(t).replace(/%s/g, function () { i++; return i < a.length ? String(a[i]) : ''; });
+    }
+
     function csrfToken() { return _cfg.csrfToken || window.csrf_token || ''; }
 
     var API   = '/plugins/filesviewer/include/filesviewer_api.php';
     var SERVE = '/plugins/filesviewer/include/filesviewer_serve.php';
 
-    // nothing secret goes in the query: it is written to the access log and to any
-    // diagnostics the user uploads. reads and writes send the csrf token as a
-    // header, media urls carry our own token instead
     function apiUrl(action, extra) {
         var url = API + '?action=' + encodeURIComponent(action);
         if (extra) url += '&' + extra;
@@ -42,15 +44,10 @@
         return u;
     }
 
-    // remember the last folder across visits, when the setting allows it
-    // key the remembered folder to the current roots, so changing the allowed
-    // folders opens at the new root instead of a stale path from the old one
     var LS_KEY = 'filesviewer:lastdir:' + (_roots.length ? _roots.join('|') : 'default');
     function saveDir(p) { if (!_remember) return; try { if (p) localStorage.setItem(LS_KEY, p); } catch (e) {} }
     function readDir()  { if (!_remember) return ''; try { return localStorage.getItem(LS_KEY) || ''; } catch (e) { return ''; } }
 
-    // a space scan outlives the page: the worker keeps walking whether anyone is
-    // watching or not, so the id is parked here to pick the scan back up
     var SP_KEY = 'filesviewer:spacejob';
     function spSaveJob(id, path) { try { localStorage.setItem(SP_KEY, JSON.stringify({ id: id, path: path })); } catch (e) {} }
     function spClearJob()        { try { localStorage.removeItem(SP_KEY); } catch (e) {} }
@@ -59,6 +56,57 @@
             var j = JSON.parse(localStorage.getItem(SP_KEY) || 'null');
             return (j && j.id) ? j : null;
         } catch (e) { return null; }
+    }
+
+    var SORT_KEY  = 'filesviewer:sort';
+    var SORT_COLS = { name: 1, type: 1, size: 1, modified: 1, owner: 1, group: 1, mode: 1 };
+    function defaultSort() {
+        return { k: SORT_COLS[_cfg.sort] ? _cfg.sort : 'name', d: _cfg.sortDir === 'desc' ? 'desc' : 'asc' };
+    }
+    function readSort() {
+        try {
+            var s = JSON.parse(localStorage.getItem(SORT_KEY) || 'null');
+            if (s && SORT_COLS[s.k]) return { k: s.k, d: s.d === 'desc' ? 'desc' : 'asc' };
+        } catch (e) {}
+        return defaultSort();
+    }
+    var _sort = readSort();
+    function setSort(key) {
+        if (!SORT_COLS[key]) return;
+        _sort = { k: key, d: (_sort.k === key && _sort.d === 'asc') ? 'desc' : 'asc' };
+        var def = defaultSort();
+        try {
+            if (_sort.k === def.k && _sort.d === def.d) localStorage.removeItem(SORT_KEY);
+            else localStorage.setItem(SORT_KEY, JSON.stringify(_sort));
+        } catch (e) {}
+        resortView();
+    }
+    function cmpStr(a, b) {
+        a = String(a || '').toLowerCase(); b = String(b || '').toLowerCase();
+        return a < b ? -1 : (a > b ? 1 : 0);
+    }
+    function entrySize(e) {
+        if (!e.is_dir) return e.size || 0;
+        return _measured[e.path] !== undefined ? _measured[e.path] : 0;
+    }
+    function sortEntries(entries) {
+        var foldersFirst = (_cfg.foldersFirst !== false);
+        var mul = _sort.d === 'desc' ? -1 : 1;
+        entries.sort(function (a, b) {
+            if (foldersFirst && a.is_dir !== b.is_dir) return a.is_dir ? -1 : 1;
+            var c;
+            switch (_sort.k) {
+                case 'size':     c = entrySize(a) - entrySize(b); break;
+                case 'modified': c = (a.mtime || 0) - (b.mtime || 0); break;
+                case 'type':     c = cmpStr(typeLabel(a), typeLabel(b)); break;
+                case 'owner':    c = cmpStr(a.owner, b.owner); break;
+                case 'group':    c = cmpStr(a.group, b.group); break;
+                case 'mode':     c = cmpStr(permText(a), permText(b)); break;
+                default:         c = cmpStr(a.name, b.name);
+            }
+            if (c === 0) c = cmpStr(a.name, b.name);
+            return c * mul;
+        });
     }
 
     function fetchJson(action, extra) {
@@ -71,8 +119,6 @@
         });
     }
 
-    // writes go by POST. action and csrf still ride on the query like the reads,
-    // and csrf goes in the body too, so the gate finds it either way.
     function postJson(action, params) {
         var body = 'csrf_token=' + encodeURIComponent(csrfToken());
         for (var k in params) {
@@ -85,8 +131,6 @@
             headers: {
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
                 'X-Requested-With': 'XMLHttpRequest',
-                // dynamix consumes csrf_token out of the body before the plugin
-                // runs, so the header is what our own check reads
                 'X-CSRF-TOKEN': csrfToken()
             },
             credentials: 'same-origin',
@@ -102,8 +146,6 @@
             .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     }
 
-    // rich previews pull a vendored library only the first time it is needed, so
-    // the page stays light. each script is fetched once and cached by its promise
     var _libs = {};
     function loadLib(file) {
         if (_libs[file]) return _libs[file];
@@ -123,14 +165,14 @@
         });
     }
 
-    // the file a read-only action targets: a single ticked file, else the previewed one
     function focusedFile() {
         if (singleSelectedFile()) return selectedPaths()[0];
         if (_previewFile && _previewFile.path) return _previewFile.path;
         return null;
     }
-    // Download is read-only, so it works on the previewed file too, no tick needed
     function downloadSelected() {
+        var paths = selectedPaths();
+        if (paths.length && !singleSelectedFile()) { promptZip(paths); return; }
         var p = focusedFile();
         if (!p) return;
         var a = document.createElement('a');
@@ -141,9 +183,292 @@
         a.click();
         document.body.removeChild(a);
     }
+    function promptZip(paths) {
+        var def = paths.length === 1 ? baseName(paths[0]) : (baseName(_currentPath || '') || 'files');
+        var inner =
+            '<label class="fv-field"><span>' + T('Archive name') + '</span>' +
+              '<div class="fv-namext"><input type="text" class="fv-input" id="fv-zp-name" autocomplete="off" spellcheck="false" value="' + esc(def) + '">' +
+              '<span class="fv-namext__ext">.zip</span></div></label>' +
+            '<p class="fv-confirm" id="fv-zp-info" style="color:var(--fv-text-dim)">' +
+              (paths.length === 1 ? T('1 item') : tf('%s items', paths.length)) + ' \u00b7 ' + T('measuring') + '\u2026</p>' +
+            '<p class="fv-confirm" style="color:var(--fv-text-dim)">' + T('The zip is built while it downloads, so the browser cannot show a total size. Links are left out.') + '</p>' +
+            '<div class="fv-modal__err" style="display:none"></div>';
+        var ov = modalOpen(T('Download as zip'), inner, T('Download'), 'fv-btn--primary', function (ov) {
+            var name = ov.querySelector('#fv-zp-name').value.trim();
+            if (!name) { modalError(ov, T('Enter a name.')); return; }
+            postDownload(paths, name);
+            modalClose();
+        });
+        var inp = ov.querySelector('#fv-zp-name'); inp.focus(); inp.select();
+        postJson('zip_info', { paths: JSON.stringify(paths), _fvt: _token }).then(function (d) {
+            var info = ov.querySelector('#fv-zp-info');
+            if (!info) return;
+            if (!d || !d.ok) { modalError(ov, (d && d.error) || T('Could not read the items.')); modalBusy(ov, true); return; }
+            info.textContent = (paths.length === 1 ? T('1 item') : tf('%s items', paths.length)) + ' \u00b7 ' +
+                (d.files === 1 ? T('1 file') : tf('%s files', d.files)) + ', ' +
+                (d.capped ? tf('more than %s', formatBytes(d.bytes)) : formatBytes(d.bytes));
+        }).catch(function () {});
+    }
+    function postDownload(paths, name) {
+        var fr = document.getElementById('fv-dl-frame');
+        if (!fr) {
+            fr = document.createElement('iframe');
+            fr.id = 'fv-dl-frame'; fr.name = 'fv-dl-frame';
+            fr.setAttribute('hidden', ''); fr.style.display = 'none';
+            document.body.appendChild(fr);
+        }
+        var f = document.createElement('form');
+        f.method = 'post'; f.action = SERVE; f.target = 'fv-dl-frame'; f.style.display = 'none';
+        var fields = { csrf_token: csrfToken(), _fvt: _token, zip: '1', paths: JSON.stringify(paths), name: name };
+        for (var k in fields) {
+            if (!Object.prototype.hasOwnProperty.call(fields, k)) continue;
+            var i = document.createElement('input');
+            i.type = 'hidden'; i.name = k; i.value = fields[k];
+            f.appendChild(i);
+        }
+        document.body.appendChild(f);
+        f.submit();
+        setTimeout(function () { if (f.parentNode) f.parentNode.removeChild(f); }, 2000);
+    }
+    function focusedItem() {
+        var p = selectedPaths();
+        if (p.length === 1) return p[0];
+        return (_previewFile && _previewFile.path) || '';
+    }
+    function pathForCopy() { return focusedItem() || _currentPath || ''; }
+    function locatePath() {
+        var p = pathForCopy();
+        return /^\/mnt\/[^\/]+\/.+/.test(p) ? p : '';
+    }
+    function isUserPath(p) { return /^\/mnt\/user0?\/.+/.test(p); }
+    function promptLocate() {
+        var p = locatePath();
+        if (!p) return;
+        var name = baseName(p), done = false;
+        var fetchIt = function (ov) {
+            modalBusy(ov, true);
+            fetchJson('locate', 'path=' + encodeURIComponent(p)).then(function (d) {
+                if (!d || !d.ok) { modalBusy(ov, false); modalError(ov, (d && d.error) || T('Request failed.')); return; }
+                done = true;
+                renderLocate(ov, d);
+            }).catch(function () { modalBusy(ov, false); modalError(ov, T('Request failed.')); });
+        };
+        var inner, okLabel;
+        if (isUserPath(p)) {
+            inner = '<p class="fv-confirm">' + tf('%s sits under /mnt/user, which merges every disk and pool. Look for the same path on each of them?', '<b>' + esc(name) + '</b>') + '</p>' +
+                    '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + T('A disk that is asleep may wake up.') + '</p>';
+            okLabel = T('Look');
+        } else {
+            inner = '<p class="fv-confirm">' + T('Looking') + '\u2026</p>';
+            okLabel = T('Close');
+        }
+        var ov = modalOpen(T('Which disk'), inner + '<div class="fv-modal__err" style="display:none"></div>', okLabel, 'fv-btn--primary', function (ov) {
+            if (done || !isUserPath(p)) { modalClose(); return; }
+            fetchIt(ov);
+        });
+        ov.classList.add('fv-modal--wide');
+        if (!isUserPath(p)) fetchIt(ov);
+    }
+    function diskCardHtml(r) {
+        var bits = [];
+        if (r.id) bits.push(esc(r.id));
+        if (r.bytes > 0) bits.push(formatBytes(r.bytes));
+        if (r.fs) bits.push(esc(r.fs));
+        if (r.temp !== null && r.temp !== undefined) bits.push(r.temp + '\u00b0C');
+        var h = '<div class="fv-loc__head"><span class="fv-loc__disk">' + esc(r.disk) + '</span>' +
+                (r.pool ? '<span class="fv-loc__tag">' + T('pool') + '</span>' : '') +
+                (r.device ? '<span class="fv-loc__dev">' + esc(r.device) + '</span>' : '') + '</div>' +
+                (bits.length ? '<div class="fv-loc__id">' + bits.join(' \u00b7 ') + '</div>' : '');
+        for (var i = 0; i < (r.members || []).length; i++) {
+            var m = r.members[i], mb = [];
+            if (m.id) mb.push(esc(m.id));
+            if (m.bytes > 0) mb.push(formatBytes(m.bytes));
+            h += '<div class="fv-loc__id">' + (m.device ? esc(m.device) + ' \u00b7 ' : '') + mb.join(' \u00b7 ') + '</div>';
+        }
+        return h;
+    }
+    function renderLocate(ov, d) {
+        var rows = d.locations || [], html;
+        var what = '<b>' + esc(d.name) + '</b>';
+        if (!rows.length) {
+            html = '<p class="fv-confirm">' + tf('%s was not found on any of the %s disks and pools. It may have just been removed.', what, d.checked) + '</p>';
+        } else {
+            html = '<p class="fv-confirm">' + (rows.length === 1
+                ? tf('%s is on %s.', what, '<b>' + esc(rows[0].disk) + '</b>')
+                : tf('%s is on %s of the %s disks and pools.', what, rows.length, d.checked)) + '</p>';
+            html += '<div class="fv-loc">';
+            for (var i = 0; i < rows.length; i++) {
+                var r = rows[i], go = (d.mode === 'user');
+                html += '<div class="fv-loc__row' + (go ? ' fv-loc__row--go' : '') + '" data-path="' + esc(r.path) + '" data-dir="' + (r.is_dir ? '1' : '0') + '" title="' + esc(r.path) + '">' +
+                          '<div class="fv-loc__card">' + diskCardHtml(r) + '</div>' +
+                          '<div class="fv-loc__meta"><span class="fv-loc__size">' + (r.is_dir ? T('folder') : (r.link ? T('link') : formatBytes(r.size))) + '</span>' +
+                          '<span class="fv-loc__date">' + (r.mtime ? fmtDate(r.mtime) : '') + '</span>' +
+                          (go ? '<span class="fv-loc__go">' + T('Open') + ' \u203a</span>' : '') + '</div>' +
+                        '</div>';
+            }
+            html += '</div>';
+            if (!d.is_dir && rows.length > 1) {
+                html += '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + T('The same file sits on more than one disk. /mnt/user shows only one of them, the others are stale copies taking space.') + '</p>';
+            }
+        }
+        var b = ov.querySelector('.fv-modal__body');
+        b.innerHTML = html;
+        var btn = ov.querySelector('.fv-modal__ok');
+        if (btn) { btn.disabled = false; btn.textContent = T('Close'); }
+        var cancel = ov.querySelector('.fv-modal__cancel');
+        if (cancel) cancel.style.display = 'none';
+        b.addEventListener('click', function (e) {
+            var row = e.target.closest ? e.target.closest('.fv-loc__row--go') : null;
+            if (!row) return;
+            var path = row.getAttribute('data-path'), isDir = row.getAttribute('data-dir') === '1';
+            modalClose();
+            openFound(path, isDir);
+        });
+    }
+    function copyLegacy(text) {
+        var ta = document.createElement('textarea');
+        ta.value = text; ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed'; ta.style.top = '-1000px';
+        document.body.appendChild(ta);
+        ta.select();
+        var ok = false;
+        try { ok = document.execCommand('copy'); } catch (e) {}
+        document.body.removeChild(ta);
+        return ok ? Promise.resolve() : Promise.reject(new Error('copy blocked'));
+    }
+    function copyText(text) {
+        if (!navigator.clipboard || !window.isSecureContext) return copyLegacy(text);
+        return navigator.clipboard.writeText(text).catch(function () { return copyLegacy(text); });
+    }
+    var _pathFlash = null;
+    function copyPath() {
+        var p = pathForCopy();
+        if (!p || !_pathBtn) return;
+        copyText(p).then(function () {
+            var span = _pathBtn.querySelector('span');
+            if (_pathFlash) clearTimeout(_pathFlash);
+            _pathBtn.classList.add('active');
+            if (span) span.textContent = T('Copied');
+            _pathFlash = setTimeout(function () {
+                _pathBtn.classList.remove('active');
+                if (span) span.textContent = T('Copy path');
+                _pathFlash = null;
+            }, 1200);
+        }, function () {
+            var ov = modalOpen(T('Copy path'),
+                '<label class="fv-field"><span>' + T('The browser did not allow the copy. Select the path and press Ctrl+C.') + '</span>' +
+                '<input type="text" class="fv-input" id="fv-cp-path" readonly value="' + esc(p) + '"></label>',
+                T('Close'), 'fv-btn--primary', function () { modalClose(); }, true);
+            var inp = ov.querySelector('#fv-cp-path'); inp.focus(); inp.select();
+        });
+    }
+    var HASH_ALGOS = ['sha256', 'sha1', 'md5', 'sha512'];
+    function entryFor(path) {
+        for (var k = 0; k < _lastEntries.length; k++) if (_lastEntries[k].path === path) return _lastEntries[k];
+        return null;
+    }
+    function promptChecksum() {
+        var path = focusedFile();
+        if (!path) return;
+        var ent = entryFor(path) || (_previewFile && _previewFile.path === path ? _previewFile : null) || {};
+        var name = ent.name || baseName(path), size = ent.size || 0;
+        var opts = '';
+        for (var i = 0; i < HASH_ALGOS.length; i++) opts += '<option value="' + HASH_ALGOS[i] + '">' + HASH_ALGOS[i].toUpperCase() + '</option>';
+        var inner =
+            '<p class="fv-confirm" style="margin-bottom:.6rem"><b>' + esc(name) + '</b> \u00b7 ' + formatBytes(size) + '</p>' +
+            '<div class="fv-namext"><select class="fv-input" id="fv-hash-algo">' + opts + '</select>' +
+              '<button type="button" class="fv-btn fv-btn--primary" id="fv-hash-go">' + T('Compute') + '</button></div>' +
+            '<div class="fv-prog" id="fv-hash-prog" style="display:none"><div class="fv-prog-bar"><div class="fv-prog-fill" id="fv-hash-fill"></div></div>' +
+              '<div class="fv-prog-row"><span id="fv-hash-pct">0%</span><span id="fv-hash-eta"></span></div></div>' +
+            '<label class="fv-field" id="fv-hash-out" style="display:none"><span id="fv-hash-label"></span>' +
+              '<div class="fv-namext"><input type="text" class="fv-input fv-mono" id="fv-hash-val" readonly><button type="button" class="fv-btn" id="fv-hash-copy">' + T('Copy') + '</button></div></label>' +
+            '<label class="fv-field" id="fv-hash-cmp" style="display:none"><span>' + T('Paste a checksum to compare') + '</span>' +
+              '<input type="text" class="fv-input fv-mono" id="fv-hash-exp" autocomplete="off" spellcheck="false"></label>' +
+            '<div class="fv-sp-line" id="fv-hash-res"></div>' +
+            '<div class="fv-modal__err" style="display:none"></div>';
+        var jobId = '', timer = null, t0 = 0;
+        var ov = modalOpen(T('Checksum'), inner, T('Close'), 'fv-btn--primary', function () { modalClose(); }, true);
+        ov.classList.add('fv-modal--wide');
+        _modalOnClose = function () { if (timer) clearInterval(timer); if (jobId) postJson('job_cancel', { id: jobId }); };
+
+        function stop() { if (timer) { clearInterval(timer); timer = null; } jobId = ''; }
+        function compare() {
+            var exp = (ov.querySelector('#fv-hash-exp').value.match(/[0-9a-fA-F]{32,128}/) || [''])[0].toLowerCase();
+            var got = ov.querySelector('#fv-hash-val').value;
+            var res = ov.querySelector('#fv-hash-res');
+            if (!exp || !got) { res.textContent = ''; res.className = 'fv-sp-line'; return; }
+            var same = exp === got;
+            res.textContent = same ? T('Match.') : T('No match.');
+            res.className = 'fv-sp-line ' + (same ? 'fv-hash-ok' : 'fv-sp-warn');
+        }
+        function paint(st) {
+            var bt = Number(st.bytes_total) || 0, bd = Number(st.bytes_done) || 0;
+            var pct = bt > 0 ? Math.min(100, Math.round(bd / bt * 100)) : 0;
+            ov.querySelector('#fv-hash-fill').style.width = pct + '%';
+            ov.querySelector('#fv-hash-pct').textContent = pct + '% \u00b7 ' + formatBytes(bd);
+            var el = (Date.now() - t0) / 1000, eta = '';
+            if (bd > 0 && bt > bd && el > 1) {
+                var rem = Math.round((bt - bd) / (bd / el));
+                eta = rem > 90 ? tf('~%sm left', Math.round(rem / 60)) : tf('~%ss left', rem);
+            }
+            ov.querySelector('#fv-hash-eta').textContent = eta;
+        }
+        function finish(st) {
+            stop();
+            ov.querySelector('#fv-hash-prog').style.display = 'none';
+            var go = ov.querySelector('#fv-hash-go'); go.disabled = false; go.textContent = T('Compute');
+            if (st.state === 'done' && st.hash) {
+                ov.querySelector('#fv-hash-label').textContent = (st.algo || '').toUpperCase() + (st.elapsed != null ? ' \u00b7 ' + tf('%ss', st.elapsed) : '');
+                ov.querySelector('#fv-hash-val').value = st.hash;
+                ov.querySelector('#fv-hash-out').style.display = '';
+                ov.querySelector('#fv-hash-cmp').style.display = '';
+                compare();
+            } else if (st.state === 'cancelled') {
+                modalError(ov, T('Cancelled.'));
+            } else {
+                modalError(ov, (st.message || T('Something went wrong.')));
+            }
+        }
+        function poll() {
+            fetchJson('job_status', 'id=' + encodeURIComponent(jobId)).then(function (d) {
+                if (!jobId) return;
+                if (!d || !d.ok) { finish({ state: 'error', message: (d && d.error) || T('job lost') }); return; }
+                var st = d.status || {};
+                if (st.state === 'done' || st.state === 'cancelled' || st.state === 'error') { finish(st); return; }
+                try { paint(st); } catch (e) {}
+            });
+        }
+        ov.querySelector('#fv-hash-go').addEventListener('click', function () {
+            var go = this;
+            if (jobId) { postJson('job_cancel', { id: jobId }); go.disabled = true; return; }
+            modalError(ov, '');
+            ov.querySelector('#fv-hash-out').style.display = 'none';
+            ov.querySelector('#fv-hash-res').textContent = '';
+            postJson('checksum_start', { path: path, algo: ov.querySelector('#fv-hash-algo').value }).then(function (d) {
+                if (!d || !d.ok) { modalError(ov, (d && d.error) || T('Could not start.')); return; }
+                jobId = d.id; t0 = Date.now();
+                go.textContent = T('Cancel');
+                ov.querySelector('#fv-hash-fill').style.width = '0%';
+                ov.querySelector('#fv-hash-pct').textContent = '0%';
+                ov.querySelector('#fv-hash-eta').textContent = '';
+                ov.querySelector('#fv-hash-prog').style.display = '';
+                timer = setInterval(poll, 500);
+                poll();
+            });
+        });
+        ov.querySelector('#fv-hash-copy').addEventListener('click', function () {
+            var b = this, v = ov.querySelector('#fv-hash-val').value;
+            if (!v) return;
+            copyText(v).then(function () { b.textContent = T('Copied'); setTimeout(function () { b.textContent = T('Copy'); }, 1200); }, function () {
+                var inp = ov.querySelector('#fv-hash-val'); inp.focus(); inp.select();
+            });
+        });
+        ov.querySelector('#fv-hash-exp').addEventListener('input', compare);
+    }
     function openRawSelected() {
-        if (!_selectedFile) return;
-        window.open(serveUrl(_selectedFile, false), '_blank', 'noopener');
+        var p = singleSelectedFile() ? selectedPaths()[0] : _selectedFile;
+        if (!p) return;
+        window.open(serveUrl(p, false), '_blank', 'noopener');
     }
     function toggleWrap() {
         var pre = _bodyEl ? _bodyEl.querySelector('.fv-code') : null;
@@ -153,31 +478,34 @@
         pre.classList.toggle('wrap-off', !on);
         if (_wrapBtn) _wrapBtn.classList.toggle('active', on);
     }
-    // each renderer says which of the shared preview tools apply to it
+    var _rawOk = false;
     function setFileTools(canWrap, canRaw, canEdit, editNote) {
-        if (_wrapBtn) { _wrapBtn.disabled = !canWrap; _wrapBtn.classList.toggle('active', canWrap); }
-        if (_rawBtn)  { _rawBtn.disabled = !canRaw; }
+        if (_wrapBtn) {
+            _wrapBtn.disabled = !canWrap; _wrapBtn.classList.toggle('active', canWrap);
+            whyOff(_wrapBtn, T('Toggle line wrapping'), T('Open a text file first'));
+        }
+        _rawOk = !!canRaw;
+        if (_rawBtn) {
+            _rawBtn.disabled = !(_rawOk || singleSelectedFile());
+            whyOff(_rawBtn, T('Open the file in a new tab'), T('Open or tick a file first'));
+        }
         _editable = !!canEdit;
         _editNote = editNote || '';
         refreshEditBtn();
     }
-    // Edit needs both an editable file and edit mode switched on. a greyed out
-    // button on a file that previews fine reads as a fault, so it says why
     function refreshEditBtn() {
         if (!_editBtn) return;
         _editBtn.disabled = !(_editable && _editMode);
         _editBtn.title = _editNote ||
-            (_editable && !_editMode ? 'Turn on editing with the eye icon first' : 'Edit');
+            (_editable && !_editMode ? T('Turn on editing with the eye icon first') : T('Edit'));
     }
 
-    // the editor cap is fixed at 2 MB and does not follow the preview limit
     function editNote(size) {
         return (size || 0) > _editMaxBytes
-            ? 'Too large to edit here, the editor takes files up to ' + formatBytes(_editMaxBytes)
+            ? tf('Too large to edit here, the editor takes files up to %s', formatBytes(_editMaxBytes))
             : '';
     }
 
-    // decimal units, kept identical to the other plugins
     function formatBytes(bytes) {
         if (!bytes || bytes <= 0) return '0 B';
         var units = ['B','KB','MB','GB','TB','PB'];
@@ -194,9 +522,9 @@
     }
 
     var CAT_LABEL = {
-        dir: 'Folder', img: 'Image', code: 'Text', md: 'Markdown', pdf: 'PDF',
-        audio: 'Audio', video: 'Video', arch: 'Archive', bin: 'File',
-        sqlite: 'Database', doc: 'Document', sheet: 'Spreadsheet', ebook: 'E-book', font: 'Font'
+        dir: T('Folder'), img: T('Image'), code: T('Text'), md: T('Markdown'), pdf: 'PDF',
+        audio: T('Audio'), video: T('Video'), arch: T('Archive'), bin: T('File'),
+        sqlite: T('Database'), doc: T('Document'), sheet: T('Spreadsheet'), ebook: T('E-book'), font: T('Font')
     };
     var CAT_TAG = {
         dir: '', img: 'IMG', code: '{}', md: 'MD', pdf: 'PDF',
@@ -204,8 +532,6 @@
         sqlite: 'DB', doc: 'DOC', sheet: 'XLS', ebook: 'BK', font: 'Aa'
     };
 
-    // unknown extensions share one neutral category, so they would all look alike.
-    // derive a stable colour from the extension text itself so each one reads distinct
     function extColor(ext) {
         var s = String(ext || '').toLowerCase();
         if (!s) return null;
@@ -215,17 +541,9 @@
         var hue = (h >>> 0) % 360;
         return { bg: 'hsla(' + hue + ',55%,50%,.18)', fg: 'hsl(' + hue + ',62%,68%)' };
     }
-    function iconStyleAttr(cat, ext) {
-        if (cat !== 'bin') return '';
-        var c = extColor(ext);
-        return c ? (' style="background:' + c.bg + ';color:' + c.fg + '"') : '';
-    }
     var FILE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M6 2h7l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2zm7 1.5V8h4.5z"/></svg>';
     var FOLDER_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg>';
 
-    // files are drawn as a small document (white page, black outline, folded
-    // corner) where only the type symbol carries colour. this is the darker,
-    // white-bg-legible variant of the category colours
     var ICON_COLOR = {
         img: '#1f7ae0', code: '#2f6fe0', md: '#7c3aed', pdf: '#d83a2c',
         audio: '#d98a1f', video: '#2a82d6', arch: '#4b5563', bin: '#4b5563',
@@ -244,8 +562,7 @@
     function fileIconSvg(cat, ext) {
         var tag = CAT_TAG[cat] || 'BIN';
         var color = (cat === 'bin') ? extColorDark(ext) : (ICON_COLOR[cat] || '#4b5563');
-        var fs = tag.length <= 1 ? 13 : (tag.length === 2 ? 10 : 7.5);   // px, html overlay
-        // page drawn as svg (reliable), symbol as html text so it always renders
+        var fs = tag.length <= 1 ? 13 : (tag.length === 2 ? 10 : 7.5);
         var svg = '<svg class="fv-docicon" width="30" height="30" viewBox="0 0 24 24" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">' +
             '<path d="' + DOC_PAGE + '" fill="#fff" stroke="#000" stroke-width="1.4" stroke-linejoin="round"/>' +
             '<path d="' + DOC_FOLD + ' Z" fill="#e8e8e8"/>' +
@@ -254,34 +571,35 @@
         return svg + '<span class="fv-doc__tag" style="color:' + color + ';font-size:' + fs + 'px">' + esc(tag) + '</span>';
     }
 
-
     var _listEl, _crumbEl, _bodyEl, _titleEl, _countEl, _pvTypeEl, _pvToolsEl, _filterEl, _pvEl, _pvCloseEl, _dlBtn, _wrapBtn, _rawBtn;
     var _filterWideEl = null, _filterNarrowEl = null, _sideBtn = null;
-    var _createBtn, _renameBtn, _deleteBtn, _editBtn, _ownerBtn, _permBtn, _copyBtn, _moveBtn, _uploadBtn, _recycleBtn, _spaceBtn, _rootEl;
-    var _editMode = false;      // false = preview only, true = editing allowed (header toggle)
-    var _editable = false;      // the previewed file is small enough to edit
-    var _editNote = '';         // why Edit is off, shown on the button
-    var _inFolder = false;      // a real folder is open (not the roots list)
-    var _currentCrumbs = [];     // folder breadcrumb data, reused to append the open file
+    var _createBtn, _renameBtn, _deleteBtn, _editBtn, _ownerBtn, _permBtn, _copyBtn, _moveBtn, _uploadBtn, _recycleBtn, _spaceBtn, _compressBtn, _pathBtn, _locateBtn, _searchBtn, _hashBtn, _rootEl;
+    var _editMode = false;
+    var _editable = false;
+    var _editNote = '';
+    var _inFolder = false;
+    var _currentCrumbs = [];
     var _hasManyRoots = false;
     var EMPTY_HTML = '';
-    var _lastEntries = [];      // the open folder, kept so the pane can list it
-    var _lastParent = '';       // the way back, the pane needs its own row for it
-    var _measured = {};         // folder sizes already worked out, path -> bytes
+    var _lastEntries = [];
+    var _lastData = null;
+    var _lastParent = '';
+    var _canPick = false;
+    var _lastPick = null;
+    var _measured = {};
     var SIDE_KEY = 'filesviewer:sidebar';
     function sideOn()  { try { return localStorage.getItem(SIDE_KEY) === '1'; } catch (e) { return false; } }
     function sideSet(v) { try { localStorage.setItem(SIDE_KEY, v ? '1' : '0'); } catch (e) {} }
     var _split = false;
     var _currentPath = '';
     var _starEl = null, _favBtn = null, _favMenuEl = null;
-    var _selectedFile = null;   // path of the file in the preview, used by Open raw
-    var _selected = {};         // checkbox selection (path -> true); the file ops act on this
-    var _previewFile = null;    // {path,cat,size,name,ext} of the file in the preview
-    var _editing = false;       // the preview is in edit mode (textarea)
-    var _editBaseline = '';     // content as loaded, to detect unsaved changes
-    var _editMtime = 0;         // mtime the file had when opened, for the stale guard
-    var _editCtx = null;        // file context to restore the read-only preview on exit
-
+    var _selectedFile = null;
+    var _selected = {};
+    var _previewFile = null;
+    var _editing = false;
+    var _editBaseline = '';
+    var _editMtime = 0;
+    var _editCtx = null;
 
     function setLoading(target) {
         target.innerHTML =
@@ -291,7 +609,7 @@
                 '<div class="fv-loading__bar"></div><div class="fv-loading__bar"></div>' +
                 '<div class="fv-loading__bar"></div>' +
               '</div>' +
-              '<div class="fv-loading__text">Reading\u2026</div>' +
+              '<div class="fv-loading__text">' + T('Reading') + '\u2026</div>' +
             '</div>';
     }
 
@@ -315,9 +633,6 @@
         if (_pvEl) _pvEl.classList.add('fv-preview--active');
     }
 
-    // close the preview: dropping the media element stops playback, then show the empty pane
-    // with nothing open the pane says "select a file" across most of the window.
-    // the folder goes there instead, with the columns the narrow list cannot fit
     function folderOverviewHtml() {
         var q = (_filterEl && _filterEl.value) ? _filterEl.value.trim().toLowerCase() : '';
         var rows = [];
@@ -326,72 +641,77 @@
         }
         if (!rows.length && !_lastParent) return '';
 
-        var pick = _editMode;   // the tick column follows the preview/edit switch
+        var pick = _editMode;
         var h = '<div class="fv-fo"><table class="fv-fo__t"><thead><tr>' +
-                  '<th class="fv-fo__nm">Name</th>' +
-                  (pick ? '<th class="fv-fo__c"><input type="checkbox" id="fv-fo-all" aria-label="Select all"></th>' : '') +
-                  '<th>Type</th><th class="fv-fo__r">Size</th><th>Modified</th>' +
-                  '<th>Owner</th><th>Group</th><th>Mode</th>' +
+                  (pick ? '<th class="fv-fo__c"><input type="checkbox" id="fv-fo-all" aria-label="' + T('Select all') + '"></th>' : '') +
+                  thHtml('name', T('Name'), 'fv-fo__nm') +
+                  thHtml('type', T('Type'), '') + thHtml('size', T('Size'), 'fv-fo__r') + thHtml('modified', T('Modified'), '') +
+                  thHtml('owner', T('Owner'), '') + thHtml('group', T('Group'), '') + thHtml('mode', T('Mode'), '') +
                 '</tr></thead><tbody>';
 
         var cols = pick ? 8 : 7;
-        // the way out has to be here too, or the pane is a one way trip
         if (_lastParent) {
             h += '<tr class="fv-fo__row fv-fo__row--up" data-path="' + esc(_lastParent) + '" data-dir="1">' +
-                   '<td colspan="' + cols + '"><span class="fv-fo__ico">' + FOLDER_SVG + '</span>..</td></tr>';
+                   (pick ? '<td class="fv-fo__c"></td>' : '') +
+                   '<td colspan="' + (pick ? cols - 1 : cols) + '"><span class="fv-fo__ico">' + FOLDER_SVG + '</span>..</td></tr>';
         }
-        for (var i = 0; i < rows.length; i++) {
-            var e  = rows[i];
-            var pv = (_permsFmt === 'symbolic') ? (e.perms || '') : (e.mode || '');
-            var ty = e.is_dir ? 'Folder' : (CAT_LABEL[e.category] || 'File');
-            if (e.link) ty += ' link';
-            h += '<tr class="fv-fo__row' + (_selected[e.path] ? ' selected' : '') + '"' +
-                   ' data-path="' + esc(e.path) + '" data-dir="' + (e.is_dir ? '1' : '0') + '">' +
-                   '<td class="fv-fo__nm"><span class="fv-fo__ico">' + (e.is_dir ? FOLDER_SVG : FILE_SVG) + '</span>' + esc(e.name) + '</td>' +
-                   (pick ? '<td class="fv-fo__c"><input type="checkbox" class="fv-focb"' + (_selected[e.path] ? ' checked' : '') + ' aria-label="Select"></td>' : '') +
-                   '<td>' + esc(ty) + '</td>' +
-                   '<td class="fv-fo__r">' + sizeCell(e) + '</td>' +
-                   '<td>' + (e.mtime ? fmtDate(e.mtime) : '') + '</td>' +
-                   '<td>' + esc(e.owner || '') + '</td>' +
-                   '<td>' + esc(e.group || '') + '</td>' +
-                   '<td>' + esc(pv) + '</td>' +
-                 '</tr>';
-        }
+        for (var i = 0; i < rows.length; i++) h += foRowHtml(rows[i], pick);
         if (!rows.length) {
             h += '<tr><td colspan="' + cols + '" class="fv-fo__none">' +
-                 (q === '' ? 'This folder is empty.' : 'Nothing matches the filter.') + '</td></tr>';
+                 (q === '' ? T('This folder is empty.') : T('Nothing matches the filter.')) + '</td></tr>';
         }
         return h + '</tbody></table></div>';
     }
 
-    // a folder has no size until something walks it, which is the same job the Space
-    // button runs and the same cost. offered per row, and only where Space is on
+    function thHtml(key, label, cls) {
+        var on = (_sort.k === key);
+        return '<th class="fv-fo__h' + (cls ? ' ' + cls : '') + (on ? ' fv-fo__h--on' : '') + '" data-key="' + key + '"' +
+               ' title="' + T('Sort by this column') + '">' + label +
+               '<i class="fv-fo__arr" aria-hidden="true">' + (on && _sort.d === 'desc' ? '\u25be' : '\u25b4') + '</i></th>';
+    }
+
+    function permText(e) { return (_permsFmt === 'symbolic') ? (e.perms || '') : (e.mode || ''); }
+    function typeLabel(e) {
+        var ty = e.is_dir ? T('Folder') : (CAT_LABEL[e.category] || T('File'));
+        return e.link ? tf('%s link', ty) : ty;
+    }
+
+    function foRowHtml(e, pick) {
+        var pv = permText(e);
+        var ty = typeLabel(e);
+        return '<tr class="fv-fo__row' + (_selected[e.path] ? ' selected' : '') + '"' +
+                 ' data-path="' + esc(e.path) + '" data-dir="' + (e.is_dir ? '1' : '0') + '">' +
+                 (pick ? '<td class="fv-fo__c"><input type="checkbox" class="fv-focb"' + (_selected[e.path] ? ' checked' : '') + ' aria-label="' + T('Select') + '"></td>' : '') +
+                 '<td class="fv-fo__nm"><span class="fv-fo__ico">' + (e.is_dir ? FOLDER_SVG : FILE_SVG) + '</span>' + esc(e.name) + '</td>' +
+                 '<td>' + esc(ty) + '</td>' +
+                 '<td class="fv-fo__r">' + sizeCell(e) + '</td>' +
+                 '<td>' + (e.mtime ? fmtDate(e.mtime) : '') + '</td>' +
+                 '<td>' + esc(e.owner || '') + '</td>' +
+                 '<td>' + esc(e.group || '') + '</td>' +
+                 '<td>' + esc(pv) + '</td>' +
+               '</tr>';
+    }
+
     function sizeCell(e) {
         if (!e.is_dir) return formatBytes(e.size);
         if (_measured[e.path] !== undefined) return formatBytes(_measured[e.path]);
         if (!_cfg.space) return '';
-        return '<button type="button" class="fv-fo__meas">Measure</button>';
+        return '<button type="button" class="fv-fo__meas">' + T('Measure') + '</button>';
     }
 
-    // with the list hidden the spinner in it is out of sight, and the table sits
-    // there unchanged, so a folder on a sleeping disk looks like a dead click.
-    // the row says what it is waiting for, after a beat so a warm disk stays quiet
     function openFolderRow(tr, path) {
-        // the row is looked up again when the time comes: loadDir rewrites the table
-        // on its way out, so the element held here is already off the page by then
         var slow = setTimeout(function () {
             var row = _bodyEl.querySelector('.fv-fo__row[data-path="' + cssEsc(path) + '"]');
             var cell = row ? row.querySelector('td') : null;
             if (!cell || cell.querySelector('.fv-fo__wait')) return;
             cell.insertAdjacentHTML('beforeend',
-                '<span class="fv-fo__wait">waiting for the disk<i></i><i></i><i></i></span>');
+                '<span class="fv-fo__wait">' + T('waiting for the disk') + '<i></i><i></i><i></i></span>');
         }, 400);
 
         loadDir(path).then(function () { clearTimeout(slow); })
                      .catch(function () { clearTimeout(slow); });
     }
 
-    // paths carry quotes and backslashes, which would break out of the selector
     function cssEsc(v) {
         return String(v).replace(/["\\]/g, '\\$&');
     }
@@ -417,10 +737,11 @@
         });
     }
 
+    function paneOpen() { return _uploadMode || _spaceMode || _searchMode || _recycleMode; }
     function showFolderOverview() {
-        if (_split || !_bodyEl) return;   // with the list out, the pane waits for a file
+        if (_split || !_bodyEl || paneOpen()) return;
         var h = folderOverviewHtml();
-        if (h) _bodyEl.innerHTML = h;
+        if (h) { _bodyEl.innerHTML = h; syncTableChecks(); }
     }
 
     function setSplit(on) {
@@ -429,19 +750,19 @@
         if (g) g.classList.toggle('fv-grid--split', _split);
         if (_sideBtn) {
             _sideBtn.setAttribute('aria-pressed', _split ? 'true' : 'false');
-            _sideBtn.title = _split ? 'Hide the folder list' : 'Show the folder list';
+            _sideBtn.title = _split ? T('Hide the folder list') : T('Show the folder list');
         }
-        // one filter box is visible at a time, so the one taking over inherits the
-        // text. both are held by name: _filterEl is whichever is on screen
         var from = _split ? _filterWideEl : _filterNarrowEl;
         var to   = _split ? _filterNarrowEl : _filterWideEl;
         if (from && to) to.value = from.value;
         _filterEl = to;
         sideSet(_split);
-        if (!_previewFile) { _bodyEl.innerHTML = EMPTY_HTML; showFolderOverview(); }
+        if (!_previewFile && !paneOpen()) { _bodyEl.innerHTML = EMPTY_HTML; showFolderOverview(); }
     }
 
+    var _pvGen = 0;
     function clearPreview() {
+        _pvGen++;
         resetPaneModes();
         _bodyEl.innerHTML = EMPTY_HTML;
         showFolderOverview();
@@ -459,7 +780,7 @@
         _editable = false;
         resetEditState();
         setFileTools(false, false);
-        updateOps();                // download off, folder-add back on (if editing)
+        updateOps();
         if (_pvEl) _pvEl.classList.remove('fv-preview--active');
     }
 
@@ -474,27 +795,13 @@
         return b;
     }
 
-    function addLink(label, title, path, dl) {
-        var a = document.createElement('a');
-        a.className = 'fv-pv-btn';
-        a.href = serveUrl(path, dl);
-        a.target = '_blank';
-        a.rel = 'noopener';
-        if (dl) a.setAttribute('download', '');
-        a.title = title || label;
-        a.textContent = label;
-        _pvToolsEl.appendChild(a);
-        return a;
-    }
-
-
     function buildCrumbsHtml(crumbs, hasManyRoots, fileName) {
         if (!crumbs || !crumbs.length) {
-            return '<span class="fv-crumb cur">Roots</span>';
+            return '<span class="fv-crumb cur">' + T('Roots') + '</span>';
         }
-        var html = '<span class="fv-crumb-label">Path:</span>';
+        var html = '<span class="fv-crumb-label">' + T('Path') + ':</span>';
         if (hasManyRoots) {
-            html += '<a class="fv-crumb" data-path="">Roots</a><span class="fv-crumb-sep">/</span>';
+            html += '<a class="fv-crumb" data-path="">' + T('Roots') + '</a><span class="fv-crumb-sep">/</span>';
         }
         for (var i = 0; i < crumbs.length; i++) {
             var last = (i === crumbs.length - 1);
@@ -517,7 +824,6 @@
         renderPathCrumbs(null);
     }
 
-    // 2026.07.08 13:30, fixed width so the cell never resizes between rows
     function fmtDate(ts) {
         var d = new Date(ts * 1000);
         var p = function (n) { return n < 10 ? '0' + n : String(n); };
@@ -525,7 +831,6 @@
                ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
     }
 
-    // the line under a name. no type here, the icon already carries it
     function itemSub(e) {
         var pv = (_permsFmt === 'symbolic') ? (e.perms || '') : (e.mode || '');
         var h  = '';
@@ -536,16 +841,19 @@
         return h;
     }
 
-    function renderList(data) {
+    function renderList(data, keepSel) {
         var entries = data.entries || [];
+        if (!data.root_picker) sortEntries(entries);
         _lastEntries = entries;
+        _lastData    = data;
         _lastParent  = (!data.is_root && data.parent) ? data.parent : '';
-        _titleEl.textContent = data.root_picker ? 'Roots' : 'Contents';
+        _titleEl.textContent = data.root_picker ? T('Roots') : T('Contents');
         _listEl.setAttribute('data-trunc', data.truncated ? '1' : '0');
-        _selected = {};                      // a fresh listing starts with nothing ticked
+        if (!keepSel) _selected = {};
 
-        var sel = !data.root_picker;         // roots are not selectable targets
-        var cb  = sel ? '<label class="fv-item__cb"><input type="checkbox" class="fv-rowcb" aria-label="Select"></label>' : '';
+        var sel = !data.root_picker;
+        _canPick = sel;
+        var cb  = sel ? '<label class="fv-item__cb"><input type="checkbox" class="fv-rowcb" aria-label="' + T('Select') + '"></label>' : '';
         var html = '';
 
         if (!data.is_root && data.parent) {
@@ -553,14 +861,12 @@
                       (sel ? '<span class="fv-item__cb"></span>' : '') +
                       '<div class="fv-ico dir">' + FOLDER_SVG + '</div>' +
                       '<div class="fv-item__meta"><div class="fv-item__name">..</div>' +
-                      '<div class="fv-item__sub"><span class="fv-sub__cell">Parent folder</span></div></div>' +
+                      '<div class="fv-item__sub"><span class="fv-sub__cell">' + T('Parent folder') + '</span></div></div>' +
                     '</div>';
         }
 
-        // the way back is built first, because an empty folder is exactly when it is
-        // the only thing on screen
         if (!entries.length) {
-            _listEl.innerHTML = html + '<div class="fv-list-empty">This folder is empty.</div>';
+            _listEl.innerHTML = html + '<div class="fv-list-empty">' + T('This folder is empty.') + '</div>';
             if (_countEl) _countEl.textContent = '';
             updateOps();
             return;
@@ -586,15 +892,62 @@
                       '</div>' +
                     '</div>';
         }
-        // a folder past the cap must say so, otherwise a filter that finds nothing
-        // reads as "the file is not here" when it simply was not sent
         if (data.truncated) {
-            html += '<div class="fv-list-note">Only the first ' + entries.length +
-                    ' items are shown. Use the filter on a narrower folder to see the rest.</div>';
+            html += '<div class="fv-list-note">' + tf('Only the first %s items are shown. Use the filter on a narrower folder to see the rest.', entries.length) + '</div>';
         }
         _listEl.innerHTML = html;
+        if (keepSel) syncListChecks();
         if (!_previewFile) showFolderOverview();
         updateOps();
+    }
+
+    function resortView() {
+        if (!_lastData || _lastData.root_picker) return;
+        var active = _previewFile ? _previewFile.path : null;
+        renderList(_lastData, true);
+        applyFilter();
+        if (active) markActive(active);
+        updateSelUi();
+    }
+
+    function orderedPaths() {
+        var q = (_filterEl && _filterEl.value) ? _filterEl.value.trim().toLowerCase() : '';
+        var out = [];
+        for (var i = 0; i < _lastEntries.length; i++) {
+            if (q === '' || _lastEntries[i].name.toLowerCase().indexOf(q) !== -1) out.push(_lastEntries[i].path);
+        }
+        return out;
+    }
+    function pickRange(path, on) {
+        var order = orderedPaths();
+        var a = order.indexOf(_lastPick), b = order.indexOf(path);
+        if (a < 0 || b < 0) return false;
+        for (var i = Math.min(a, b); i <= Math.max(a, b); i++) {
+            if (on) _selected[order[i]] = true; else delete _selected[order[i]];
+        }
+        return true;
+    }
+    function onPickClick(e) {
+        var t = e.target;
+        if (!t || t.type !== 'checkbox' || !t.classList || !(t.classList.contains('fv-focb') || t.classList.contains('fv-rowcb'))) return;
+        var row = t.closest('.fv-fo__row, .fv-item');
+        var path = row ? row.getAttribute('data-path') : null;
+        if (!path) return;
+        if (e.shiftKey && _lastPick && _lastPick !== path && pickRange(path, t.checked)) {
+            syncListChecks();
+            updateSelUi();
+        }
+        _lastPick = path;
+    }
+    function onPickDown(e) {
+        if (e.shiftKey && e.target && e.target.closest && e.target.closest('.fv-fo__c, .fv-item__cb')) e.preventDefault();
+    }
+    function selectAllVisible() {
+        var order = orderedPaths();
+        _selected = {};
+        for (var i = 0; i < order.length; i++) _selected[order[i]] = true;
+        syncListChecks();
+        updateSelUi();
     }
 
     function markActive(path) {
@@ -603,17 +956,16 @@
             items[i].classList.toggle('active',
                 items[i].getAttribute('data-path') === path && items[i].getAttribute('data-dir') === '0');
         }
-        // the star reads _previewFile, so callers set it before they get here
         refreshStar();
     }
 
-
     function renderImage(path, name) {
-        setPvHead(name, 'Image', 'img');
+        setPvHead(name, T('Image'), 'img');
         _bodyEl.innerHTML = '<div class="fv-imgwrap" id="fv-imgwrap"><img class="fv-img fit" id="fv-img" alt=""></div>';
         var wrap = document.getElementById('fv-imgwrap');
         var img  = document.getElementById('fv-img');
-        img.onerror = function () { loadMeta(path, 'This file could not be shown as an image.'); };
+        var gen = _pvGen;
+        img.onerror = function () { if (gen === _pvGen) loadMeta(path, T('This file could not be shown as an image.')); };
         img.src = serveUrl(path, false);
         img.addEventListener('dragstart', function (e) { e.preventDefault(); });
 
@@ -623,18 +975,16 @@
             img.classList.toggle('fit', fit);
             wrap.classList.toggle('actual', !fit);
             img.style.cursor = fit ? 'zoom-in' : 'zoom-out';
-            if (fitBtn) { fitBtn.textContent = fit ? 'Actual size' : 'Fit'; fitBtn.classList.toggle('active', !fit); }
+            if (fitBtn) { fitBtn.textContent = fit ? T('Actual size') : T('Fit'); fitBtn.classList.toggle('active', !fit); }
             if (!fit) {
-                // open the 1:1 view on the middle of the picture
                 wrap.scrollLeft = (wrap.scrollWidth  - wrap.clientWidth)  / 2;
                 wrap.scrollTop  = (wrap.scrollHeight - wrap.clientHeight) / 2;
             }
         }
-        fitBtn = addTool('Actual size', 'Switch between fit and actual size', toggleFit);
+        fitBtn = addTool(T('Actual size'), T('Switch between fit and actual size'), toggleFit);
+        addTool(T('Full screen'), T('Show the image full screen, with arrows to the other images in the folder'), function () { openLightbox(path); });
         img.style.cursor = 'zoom-in';
 
-        // 1:1 can outgrow the pane and there are no bars: overflow is reached
-        // by dragging, and a real drag must not count as the toggle click
         var dragging = false, moved = false, sx = 0, sy = 0, sl = 0, st = 0;
         wrap.addEventListener('pointerdown', function (e) {
             if (fit || e.button !== 0) return;
@@ -653,8 +1003,6 @@
         wrap.addEventListener('pointerup', dragEnd);
         wrap.addEventListener('pointercancel', dragEnd);
 
-        // pointer capture retargets the click to the wrap, so the toggle lives
-        // there: on the image while fitted, anywhere while zoomed in
         wrap.addEventListener('click', function (e) {
             if (moved) { moved = false; return; }
             if (fit && e.target !== img) return;
@@ -663,70 +1011,167 @@
         setFileTools(false, true);
     }
 
-    // the browser plays what its codecs support. anything it cannot decode (often
-    // MKV or H.265) falls back to the details card rather than a blank player.
+    var _lb = null;
+    var LB_PREV = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 5l-7 7 7 7"/></svg>';
+    var LB_NEXT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 5l7 7-7 7"/></svg>';
+    var LB_X    = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>';
+
+    function folderImages() {
+        var q = (_filterEl && _filterEl.value) ? _filterEl.value.trim().toLowerCase() : '';
+        var out = [];
+        for (var i = 0; i < _lastEntries.length; i++) {
+            var e = _lastEntries[i];
+            if (e.is_dir || e.category !== 'img' || !(e.size > 0) || e.size > _imgMaxBytes) continue;
+            if (q !== '' && e.name.toLowerCase().indexOf(q) === -1) continue;
+            out.push(e);
+        }
+        return out;
+    }
+
+    function openLightbox(path) {
+        closeLightbox(false);
+        var list = folderImages(), idx = -1;
+        for (var i = 0; i < list.length; i++) if (list[i].path === path) { idx = i; break; }
+        if (idx < 0) { list = [{ path: path, name: baseName(path), size: 0 }]; idx = 0; }
+
+        var ov = document.createElement('div');
+        ov.className = 'fv-lb fv-lb--loading';
+        ov.innerHTML =
+            '<img class="fv-lb__img" alt="">' +
+            '<div class="fv-lb__nav fv-lb__nav--prev" role="button" tabindex="0" aria-label="' + T('Previous') + '">' + LB_PREV + '</div>' +
+            '<div class="fv-lb__nav fv-lb__nav--next" role="button" tabindex="0" aria-label="' + T('Next') + '">' + LB_NEXT + '</div>' +
+            '<div class="fv-lb__close" role="button" tabindex="0" aria-label="' + T('Close') + '">' + LB_X + '</div>' +
+            '<div class="fv-lb__cap"><span class="fv-lb__name"></span><span class="fv-lb__count"></span></div>';
+        document.body.appendChild(ov);
+        var prevOverflow = document.body.style.overflow;
+        document.body.style.overflow = 'hidden';
+
+        var img = ov.querySelector('.fv-lb__img');
+        var prev = ov.querySelector('.fv-lb__nav--prev'), next = ov.querySelector('.fv-lb__nav--next');
+        var nameEl = ov.querySelector('.fv-lb__name'), countEl = ov.querySelector('.fv-lb__count');
+        var lb = { ov: ov, list: list, idx: idx, overflow: prevOverflow, full: false, keys: null };
+        _lb = lb;
+
+        function show(i) {
+            if (i < 0 || i >= list.length) return;
+            lb.idx = i;
+            var e = list[i];
+            ov.classList.add('fv-lb--loading');
+            ov.classList.remove('fv-lb--broken');
+            img.src = serveUrl(e.path, false);
+            nameEl.textContent = e.name + (e.size ? ' \u00b7 ' + formatBytes(e.size) : '');
+            countEl.textContent = list.length > 1 ? tf('%s of %s', i + 1, list.length) : '';
+            prev.classList.toggle('fv-lb__nav--off', i === 0);
+            next.classList.toggle('fv-lb__nav--off', i === list.length - 1);
+            if (i + 1 < list.length) { var a = new Image(); a.src = serveUrl(list[i + 1].path, false); }
+            if (i > 0) { var b = new Image(); b.src = serveUrl(list[i - 1].path, false); }
+        }
+        img.addEventListener('load', function () { ov.classList.remove('fv-lb--loading'); });
+        img.addEventListener('error', function () { ov.classList.remove('fv-lb--loading'); ov.classList.add('fv-lb--broken'); nameEl.textContent = list[lb.idx].name + ' \u00b7 ' + T('could not be shown'); });
+        img.addEventListener('dragstart', function (e) { e.preventDefault(); });
+
+        prev.addEventListener('click', function (e) { e.stopPropagation(); show(lb.idx - 1); });
+        next.addEventListener('click', function (e) { e.stopPropagation(); show(lb.idx + 1); });
+        ov.querySelector('.fv-lb__close').addEventListener('click', function (e) { e.stopPropagation(); closeLightbox(true); });
+        ov.addEventListener('click', function (e) { if (e.target === ov || e.target === img) closeLightbox(true); });
+
+        lb.keys = function (e) {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === ' ') { e.preventDefault(); show(lb.idx + 1); }
+            else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); show(lb.idx - 1); }
+            else if (e.key === 'Home') { e.preventDefault(); show(0); }
+            else if (e.key === 'End') { e.preventDefault(); show(list.length - 1); }
+            else if (e.key === 'Escape') { e.preventDefault(); closeLightbox(true); }
+            else return;
+            e.stopPropagation();
+        };
+        document.addEventListener('keydown', lb.keys, true);
+        lb.fsc = function () { if (_lb === lb && lb.full && !document.fullscreenElement) closeLightbox(true); };
+        document.addEventListener('fullscreenchange', lb.fsc);
+        if (ov.requestFullscreen) {
+            var r = ov.requestFullscreen();
+            lb.full = true;
+            if (r && r.catch) r.catch(function () { lb.full = false; });
+        }
+        show(idx);
+    }
+
+    function closeLightbox(follow) {
+        var lb = _lb;
+        if (!lb) return;
+        _lb = null;
+        document.removeEventListener('keydown', lb.keys, true);
+        document.removeEventListener('fullscreenchange', lb.fsc);
+        if (lb.full && document.fullscreenElement === lb.ov && document.exitFullscreen) document.exitFullscreen().catch(function () {});
+        if (lb.ov.parentNode) lb.ov.parentNode.removeChild(lb.ov);
+        document.body.style.overflow = lb.overflow;
+        var cur = lb.list[lb.idx];
+        if (follow && cur && (!_previewFile || _previewFile.path !== cur.path)) {
+            var row = findRow(cur.path);
+            if (row) { openFile(row); if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' }); }
+        }
+    }
 
     function mediaError(path, kind) {
+        var gen = _pvGen;
         return function () {
-            loadMeta(path, 'This ' + kind + ' could not be played in the browser. The container or codec may be unsupported.');
+            if (gen === _pvGen) loadMeta(path, tf('This %s could not be played in the browser. The container or codec may be unsupported.', kind));
         };
     }
 
     function renderVideo(path, name) {
-        setPvHead(name, 'Video', 'video');
+        setPvHead(name, T('Video'), 'video');
         _bodyEl.innerHTML =
             '<div class="fv-mediawrap">' +
               '<div class="fv-videobox">' +
                 '<video id="fv-media" class="fv-video" controls playsinline preload="metadata"' + (_autoplay ? ' autoplay' : '') + '></video>' +
               '</div>' +
-              '<div class="fv-media-note">If playback does not start, the container or codec may not be supported by the browser (for example MKV or H.265).</div>' +
+              '<div class="fv-media-note">' + T('If playback does not start, the container or codec may not be supported by the browser (for example MKV or H.265).') + '</div>' +
             '</div>';
         var v = document.getElementById('fv-media');
-        v.addEventListener('error', mediaError(path, 'video'));
+        v.addEventListener('error', mediaError(path, T('video')));
         v.src = serveUrl(path, false);
         setFileTools(false, true);
     }
 
     function renderAudio(path, name) {
-        setPvHead(name, 'Audio', 'audio');
+        setPvHead(name, T('Audio'), 'audio');
         _bodyEl.innerHTML =
             '<div class="fv-mediawrap fv-mediawrap--audio">' +
               '<audio id="fv-media" class="fv-audio" controls preload="metadata"' + (_autoplay ? ' autoplay' : '') + '></audio>' +
             '</div>';
         var a = document.getElementById('fv-media');
-        a.addEventListener('error', mediaError(path, 'audio'));
+        a.addEventListener('error', mediaError(path, T('audio')));
         a.src = serveUrl(path, false);
         setFileTools(false, true);
     }
 
-
     function truncatedBanner(d) {
         return d.truncated
-            ? '<div class="fv-trunc">Showing the first part only. This file is larger than the preview limit.</div>'
+            ? '<div class="fv-trunc">' + T('Showing the first part only. This file is larger than the preview limit.') + '</div>'
             : '';
     }
 
     function loadPreview(path, name, ext) {
+        var gen = _pvGen;
         setLoading(_bodyEl);
         setPvHead(name, ext ? ('.' + ext) : '', 'code');
         fetchJson('preview', 'path=' + encodeURIComponent(path)).then(function (d) {
-            if (!d || !d.ok) { _bodyEl.innerHTML = errorBox((d && d.error) || 'Could not read this file.'); return; }
+            if (gen !== _pvGen) return;
+            if (!d || !d.ok) { _bodyEl.innerHTML = errorBox((d && d.error) || T('Could not read this file.')); return; }
             if (d.kind === 'text') {
                 if (ext === 'csv' || ext === 'tsv') renderCsv(d, path, name, ext);
                 else                                renderText(d, path, name, ext);
             }
             else if (d.kind === 'markdown') renderMarkdown(d, path, name);
-            else                            loadMeta(path);   // binary or anything not text
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Request failed.'); });
+            else                            loadMeta(path);
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Request failed.')); });
     }
 
     function renderText(d, path, name, ext) {
-        setPvHead(name, ext ? ('.' + ext) : 'Text', 'code');
+        setPvHead(name, ext ? ('.' + ext) : T('Text'), 'code');
         _bodyEl.innerHTML = truncatedBanner(d);
 
         var text = d.content || '';
-        // highlighting a multi-MB log blocks the page, so past this size we skip it and
-        // break the text into chunks the browser can skip while they are off screen
         var big = text.length > 120000;
 
         var pre = document.createElement('pre');
@@ -747,20 +1192,20 @@
         } else {
             var code = document.createElement('code');
             if (d.language) code.className = 'language-' + d.language;
-            code.textContent = text;   // textContent, never innerHTML, so the file cannot inject markup
+            code.textContent = text;
             pre.appendChild(code);
             _bodyEl.appendChild(pre);
             try { if (window.hljs) window.hljs.highlightElement(code); } catch (e) {}
         }
 
         if (ext === 'csv' || ext === 'tsv') {
-            addTool('Table', 'Show as a table', function () { renderCsv(d, path, name, ext); });
+            addTool(T('Table'), T('Show as a table'), function () { renderCsv(d, path, name, ext); });
         }
         setFileTools(true, true, (d.size || 0) <= _editMaxBytes, editNote(d.size));
     }
 
     function renderMarkdown(d, path, name) {
-        setPvHead(name, 'Markdown', 'md');
+        setPvHead(name, T('Markdown'), 'md');
         var rendered = true;
 
         function highlightInside() {
@@ -774,7 +1219,6 @@
             var html;
             try { html = window.marked ? window.marked.parse(d.content) : ('<pre>' + esc(d.content) + '</pre>'); }
             catch (e) { html = '<pre>' + esc(d.content) + '</pre>'; }
-            // no sanitiser, no rendered html: the file decides what is in there
             if (!window.DOMPurify) { _bodyEl.innerHTML = truncatedBanner(d) + '<pre class="fv-code wrap-on">' + esc(d.content) + '</pre>'; return; }
             html = window.DOMPurify.sanitize(html);
             _bodyEl.innerHTML = truncatedBanner(d) + '<div class="fv-md">' + html + '</div>';
@@ -794,44 +1238,44 @@
 
         showRendered();
 
-        var srcBtn = addTool('View source', 'Toggle rendered or source', function () {
+        var srcBtn = addTool(T('View source'), T('Toggle rendered or source'), function () {
             rendered = !rendered;
             if (rendered) showRendered(); else showSource();
-            srcBtn.textContent = rendered ? 'View source' : 'View rendered';
+            srcBtn.textContent = rendered ? T('View source') : T('View rendered');
             srcBtn.classList.toggle('active', !rendered);
         });
         setFileTools(false, true, (d.size || 0) <= _editMaxBytes, editNote(d.size));
     }
 
-
     function loadMeta(path, note) {
+        var gen = _pvGen;
         markActive(path);
         setLoading(_bodyEl);
-        setPvHead('Preview', '');
+        setPvHead(T('Preview'), '');
         fetchJson('meta', 'path=' + encodeURIComponent(path)).then(function (m) {
-            renderMeta(m, note);
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Request failed.'); });
+            if (gen === _pvGen) renderMeta(m, note);
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Request failed.')); });
     }
 
     function renderMeta(m, note) {
-        if (!m || !m.ok) { _bodyEl.innerHTML = errorBox('This file could not be read.'); return; }
+        if (!m || !m.ok) { _bodyEl.innerHTML = errorBox(T('This file could not be read.')); return; }
 
         setPvHead(m.name, m.ext ? ('.' + m.ext) : (CAT_LABEL[m.category] || ''), m.category);
 
         var rows = [
-            ['Type',     (CAT_LABEL[m.category] || 'File') + (m.ext ? ' (.' + esc(m.ext) + ')' : '')],
-            ['Size',     formatBytes(m.size)],
-            ['Modified', formatDate(m.mtime)],
-            ['Type id',  esc(m.mime)],
-            ['Perms',    esc((_permsFmt === 'symbolic') ? (m.perms || m.mode) : (m.mode || m.perms))],
-            ['Path',     esc(m.path)]
+            [T('Type'),     (CAT_LABEL[m.category] || T('File')) + (m.ext ? ' (.' + esc(m.ext) + ')' : '')],
+            [T('Size'),     formatBytes(m.size)],
+            [T('Modified'), formatDate(m.mtime)],
+            [T('Type id'),  esc(m.mime)],
+            [T('Perms'),    esc((_permsFmt === 'symbolic') ? (m.perms || m.mode) : (m.mode || m.perms))],
+            [T('Path'),     esc(m.path)]
         ];
         var table = '';
         for (var i = 0; i < rows.length; i++) {
             table += '<div><span>' + rows[i][0] + '</span><span>' + rows[i][1] + '</span></div>';
         }
 
-        var msg = note || 'This file has no preview available.';
+        var msg = note || T('This file has no preview available.');
         _bodyEl.innerHTML =
             '<div class="fv-meta">' +
               '<div class="fv-meta__msg">' + esc(msg) + '</div>' +
@@ -839,35 +1283,40 @@
             '</div>';
     }
 
-
     function renderPdf(path, name) {
         setPvHead(name, 'PDF', 'pdf');
-        _bodyEl.innerHTML = '<div class="fv-pdfwrap"><iframe class="fv-pdf" id="fv-pdf" title="PDF preview"></iframe></div>';
-        document.getElementById('fv-pdf').src = serveUrl(path, false);   // the browser viewer renders it inline
+        _bodyEl.innerHTML = '<div class="fv-pdfwrap"><iframe class="fv-pdf" id="fv-pdf" title="' + T('PDF preview') + '"></iframe></div>';
+        document.getElementById('fv-pdf').src = serveUrl(path, false);
         setFileTools(false, true);
     }
 
     function loadArchive(path, name) {
+        var gen = _pvGen;
         setLoading(_bodyEl);
-        setPvHead(name, 'Archive', 'arch');
+        setPvHead(name, T('Archive'), 'arch');
         fetchJson('archive', 'path=' + encodeURIComponent(path)).then(function (d) {
-            if (!d || !d.ok) { _bodyEl.innerHTML = errorBox((d && d.error) || 'Could not read this archive.'); return; }
+            if (gen !== _pvGen) return;
+            if (!d || !d.ok) { _bodyEl.innerHTML = errorBox((d && d.error) || T('Could not read this archive.')); return; }
             if (d.kind === 'archive') renderArchive(d, path, name);
-            else loadMeta(path, 'Listing for this archive type is not supported yet.');
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Request failed.'); });
+            else loadMeta(path, T('Listing for this archive type is not supported yet.'));
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Request failed.')); });
     }
 
     function renderArchive(d, path, name) {
-        setPvHead(name, 'Archive', 'arch');
+        setPvHead(name, T('Archive'), 'arch');
         var rows = d.entries || [];
+        var ex   = d.extract || null;
 
-        var head = '<div class="fv-arch-head">' +
-            (d.count || 0) + (d.truncated ? '+' : '') + ' entries' +
-            (d.truncated ? ' (showing the first ' + d.count + ')' : '') +
-            ' \u00b7 listing only, nothing is extracted</div>';
+        var head = '<div class="fv-arch-head"><span>' +
+            tf('%s entries', (d.count || 0) + (d.truncated ? '+' : '')) +
+            (d.truncated ? ' ' + tf('(showing the first %s)', d.count) : '') +
+            ' \u00b7 ' + T('listing only, nothing is extracted') + '</span>' +
+            (ex && rows.length ? '<button type="button" class="fv-btn fv-btn--primary" id="fv-arch-extract"' +
+                ' data-folder="' + esc(ex.folder) + '" data-taken="' + (ex.taken ? '1' : '0') + '">' + T('Extract') + '</button>' : '') +
+            '</div>';
 
         if (!rows.length) {
-            _bodyEl.innerHTML = head + '<div class="fv-list-empty">No entries, or this archive could not be listed.</div>';
+            _bodyEl.innerHTML = head + '<div class="fv-list-empty">' + T('No entries, or this archive could not be listed.') + '</div>';
             return;
         }
 
@@ -884,8 +1333,62 @@
         html += '</div>';
 
         _bodyEl.innerHTML = head + html;
+        refreshExtractBtn();
+        var xb = document.getElementById('fv-arch-extract');
+        if (xb) xb.addEventListener('click', function () { promptExtract(path, name, ex.folder); });
     }
 
+    function refreshExtractBtn() {
+        var b = document.getElementById('fv-arch-extract');
+        if (!b) return;
+        var folder = b.getAttribute('data-folder') || '';
+        var taken  = b.getAttribute('data-taken') === '1';
+        b.disabled = !_editMode;
+        b.title = !_editMode ? T('Switch on editing to extract')
+                : tf('Unpack next to the archive, into a folder named %s unless it holds a single file or folder', folder) +
+                  (taken ? ' ' + T('(the name is taken, so a number is added)') : '');
+    }
+
+    function promptCompress() {
+        var paths = selectedPaths();
+        if (!paths.length) return;
+        var stem = paths.length === 1 ? baseName(paths[0]).replace(/\.(zip|tar\.gz|tgz|tar\.bz2|tbz2?|tar\.xz|txz|tar|gz|bz2|xz|7z|rar)$/i, '') : baseName(_currentPath || '/');
+        var inner =
+            '<label class="fv-field"><span>' + T('Archive name') + '</span>' +
+              '<div class="fv-namext"><input type="text" class="fv-input" id="fv-cx-name" autocomplete="off" spellcheck="false" value="' + esc(stem) + '">' +
+              '<select class="fv-input" id="fv-cx-fmt"><option value="zip">.zip</option><option value="tgz">.tar.gz</option></select></div></label>' +
+            '<p class="fv-confirm" style="color:var(--fv-text-dim)">' +
+              (paths.length === 1 ? tf('%s goes in, next to it. Links are left out.', '<b>' + esc(baseName(paths[0])) + '</b>')
+                                  : tf('%s items go in, next to them. Links are left out.', paths.length)) + '</p>' +
+            '<div class="fv-modal__err" style="display:none"></div>';
+        var ov = modalOpen(T('Compress'), inner, T('Compress'), 'fv-btn--primary', function (ov) {
+            var name = ov.querySelector('#fv-cx-name').value.trim();
+            if (!name) { modalError(ov, T('Enter a name.')); return; }
+            modalBusy(ov, true);
+            postJson('compress', { sources: JSON.stringify(paths), name: name, format: ov.querySelector('#fv-cx-fmt').value }).then(function (d) {
+                if (!d || !d.ok) { modalError(ov, (d && d.error) || T('Could not start.')); modalBusy(ov, false); return; }
+                openProgress('compress', d.job);
+            });
+        });
+        var inp = ov.querySelector('#fv-cx-name'); inp.focus(); inp.select();
+    }
+
+    function promptExtract(path, name, folder) {
+        var inner =
+            '<p class="fv-confirm">' + tf('Extract %s next to it?', '<b>' + esc(name) + '</b>') + '</p>' +
+            '<p class="fv-confirm" style="color:var(--fv-text-dim)">' +
+            tf('A single file or folder inside comes out as itself, anything more goes into a folder named %s. A name that is taken gets a number.', '<b>' + esc(folder) + '</b>') + ' ' +
+            T('Links and special entries in the archive are left out.') + ' ' +
+            T('What comes out takes the owner and permissions of this folder, not what the archive says.') + '</p>' +
+            '<div class="fv-modal__err" style="display:none"></div>';
+        modalOpen(T('Extract'), inner, T('Extract'), 'fv-btn--primary', function (ov) {
+            modalBusy(ov, true);
+            postJson('extract', { path: path }).then(function (d) {
+                if (!d || !d.ok) { modalError(ov, (d && d.error) || T('Could not start.')); modalBusy(ov, false); return; }
+                openProgress('extract', d.job);
+            });
+        });
+    }
 
     function loadDir(path, fromInit) {
         return new Promise(function (resolve) {
@@ -896,43 +1399,42 @@
 
     function loadDirNow(path, fromInit) {
         _currentPath = path || '';
+        _lastPick = null;
         clearPreview();
         clearFilter();
         setLoading(_listEl);
         return fetchJson('list', 'path=' + encodeURIComponent(_currentPath)).then(function (data) {
             if (!data || !data.ok) {
-                // a remembered path may no longer exist or be allowed; drop to the root on first load
                 if (fromInit && _currentPath !== '') { loadDir('', false); return; }
-                _listEl.innerHTML = errorBox((data && data.error) || 'Could not read this folder.');
+                _listEl.innerHTML = errorBox((data && data.error) || T('Could not read this folder.'));
                 return;
             }
             var manyRoots = (data.roots && data.roots.length > 1);
-            saveDir(data.path || '');
-            _inFolder = !!data.path;            // the roots list has no target folder
+            _currentPath = data.path || '';
+            saveDir(_currentPath);
+            _inFolder = !!data.path;
             renderCrumbs(data.breadcrumb, data.is_root, manyRoots);
             renderList(data);
             applyFilter();
         }).catch(function () {
             if (fromInit && _currentPath !== '') { loadDir('', false); return; }
-            _listEl.innerHTML = errorBox('Request failed.');
+            _listEl.innerHTML = errorBox(T('Request failed.'));
         });
     }
-
-
-    // dispatch a file to the right preview once it is cleared to be read
 
     function renderCsv(d, path, name, ext) {
         setPvHead(name, (ext ? '.' + ext : 'CSV'), 'code');
         _bodyEl.innerHTML = truncatedBanner(d) + '<div class="fv-csvwrap" id="fv-csvwrap"></div>';
-        var wrap = document.getElementById('fv-csvwrap');
+        var wrap = document.getElementById('fv-csvwrap'), gen = _pvGen;
         setLoading(wrap);
         loadLib('papaparse.min.js').then(function () {
+            if (gen !== _pvGen) return;
             var parsed = window.Papa.parse(d.content || '', {
                 delimiter: (ext === 'tsv') ? '\t' : '',
                 skipEmptyLines: true
             });
             var rows = (parsed && parsed.data) || [];
-            if (!rows.length) { wrap.innerHTML = errorBox('No rows to show.'); return; }
+            if (!rows.length) { wrap.innerHTML = errorBox(T('No rows to show.')); return; }
             var head = rows[0], html = '<table class="fv-table"><thead><tr>';
             for (var i = 0; i < head.length; i++) html += '<th>' + esc(String(head[i])) + '</th>';
             html += '</tr></thead><tbody>';
@@ -943,26 +1445,25 @@
                 html += '</tr>';
             }
             wrap.innerHTML = html + '</tbody></table>';
-        }).catch(function () { wrap.innerHTML = errorBox('Could not parse this file.'); });
+        }).catch(function () { if (gen === _pvGen) wrap.innerHTML = errorBox(T('Could not parse this file.')); });
 
-        addTool('Raw', 'Show as plain text', function () { renderText(d, path, name, ext); });
+        addTool(T('Raw'), T('Show as plain text'), function () { renderText(d, path, name, ext); });
         setFileTools(false, true);
     }
 
-    // sqlite preview: the server reads the database (immutable, read only) and
-    // hands over tables and rows. nothing is downloaded to the browser, so a
-    // multi gigabyte live library opens instantly and cannot be disturbed
-    var _db = null;   // { path, name, info } while a database preview is open
+    var _db = null;
 
     function renderSqlite(path, name) {
-        setPvHead(name, 'Database', 'sqlite');
+        setPvHead(name, T('Database'), 'sqlite');
         setLoading(_bodyEl);
         _db = null;
+        var gen = _pvGen;
         fetchJson('db_info', 'path=' + encodeURIComponent(path)).then(function (d) {
-            if (!d || !d.ok) { _bodyEl.innerHTML = errorBox((d && d.error) || 'Could not open this database.'); return; }
+            if (gen !== _pvGen) return;
+            if (!d || !d.ok) { _bodyEl.innerHTML = errorBox((d && d.error) || T('Could not open this database.')); return; }
             _db = { path: path, name: name, info: d };
             renderDbTables();
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Request failed.'); });
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Request failed.')); });
     }
 
     var DB_TABLE_SVG = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M3 5h18M3 10h18M3 15h18M3 20h18M8 5v15M16 5v15"/></svg>';
@@ -976,23 +1477,23 @@
 
         var html = '<div class="fv-db2">' +
             '<div class="fv-db2-head"><b>' + esc(_db.name) + '</b> \u00b7 ' + formatBytes(d.size || 0) +
-            ' \u00b7 SQLite ' + esc(d.sqlite || '?') + ' \u00b7 ' + nt + (nt === 1 ? ' table' : ' tables') +
-            (nv ? ', ' + nv + (nv === 1 ? ' view' : ' views') : '') +
-            ' \u00b7 ' + (d.immutable ? 'opened read only, no locks' : 'opened read only') + '</div>';
-        if (d.wal) html += '<div class="fv-db2-warn">Write ahead log present: recent changes by the running app may not appear here.</div>';
-        if (d.counts_partial) html += '<div class="fv-db2-note">Some row counts were skipped to keep this large database quick to open.</div>';
+            ' \u00b7 SQLite ' + esc(d.sqlite || '?') + ' \u00b7 ' + (nt === 1 ? tf('%s table', nt) : tf('%s tables', nt)) +
+            (nv ? ', ' + (nv === 1 ? tf('%s view', nv) : tf('%s views', nv)) : '') +
+            ' \u00b7 ' + (d.immutable ? T('opened read only, no locks') : T('opened read only')) + '</div>';
+        if (d.wal) html += '<div class="fv-db2-warn">' + T('Write ahead log present: recent changes by the running app may not appear here.') + '</div>';
+        if (d.counts_partial) html += '<div class="fv-db2-note">' + T('Some row counts were skipped to keep this large database quick to open.') + '</div>';
 
         if (!tables.length) {
-            html += '<div class="fv-list-empty">No tables found in this database.</div>';
+            html += '<div class="fv-list-empty">' + T('No tables found in this database.') + '</div>';
         } else {
             html += '<div class="fv-db2-list">';
             tables.forEach(function (t, i) {
-                var meta = t.cols + (t.cols === 1 ? ' col' : ' cols');
-                if (t.rows !== null && t.rows !== undefined) meta += ' \u00b7 ' + t.rows.toLocaleString() + (t.rows === 1 ? ' row' : ' rows');
+                var meta = (t.cols === 1 ? tf('%s col', t.cols) : tf('%s cols', t.cols));
+                if (t.rows !== null && t.rows !== undefined) meta += ' \u00b7 ' + (t.rows === 1 ? tf('%s row', t.rows.toLocaleString()) : tf('%s rows', t.rows.toLocaleString()));
                 html += '<div class="fv-db2-trow" data-i="' + i + '">' +
                           '<span class="fv-db2-tico">' + DB_TABLE_SVG + '</span>' +
                           '<span class="fv-db2-tname">' + esc(t.name) + '</span>' +
-                          (t.kind === 'view' ? '<span class="fv-db2-badge">view</span>' : '') +
+                          (t.kind === 'view' ? '<span class="fv-db2-badge">' + T('view') + '</span>' : '') +
                           '<span class="fv-db2-tmeta">' + meta + '</span>' +
                         '</div>';
             });
@@ -1011,20 +1512,21 @@
 
     function loadDbRows(table, offset) {
         if (!_db) return;
+        var gen = _pvGen;
         setLoading(_bodyEl);
         fetchJson('db_rows', 'path=' + encodeURIComponent(_db.path) +
                              '&table=' + encodeURIComponent(table) +
                              '&offset=' + offset + '&limit=100').then(function (d) {
-            if (!_db) return;
+            if (!_db || gen !== _pvGen) return;
             if (!d || !d.ok) {
-                _bodyEl.innerHTML = '<div class="fv-db2"><div class="fv-db2-top"><button type="button" class="fv-btn" id="fv-db-back">\u2190 Tables</button></div>' +
-                                    errorBox((d && d.error) || 'Could not read this table.') + '</div>';
+                _bodyEl.innerHTML = '<div class="fv-db2"><div class="fv-db2-top"><button type="button" class="fv-btn" id="fv-db-back">\u2190 ' + T('Tables') + '</button></div>' +
+                                    errorBox((d && d.error) || T('Could not read this table.')) + '</div>';
                 var bk = _bodyEl.querySelector('#fv-db-back');
                 if (bk) bk.addEventListener('click', renderDbTables);
                 return;
             }
             renderDbGrid(d);
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Request failed.'); });
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Request failed.')); });
     }
 
     function renderDbGrid(d) {
@@ -1033,15 +1535,15 @@
 
         var html = '<div class="fv-db2 fv-db2--grid">' +
             '<div class="fv-db2-top">' +
-              '<button type="button" class="fv-btn" id="fv-db-back">\u2190 Tables</button>' +
+              '<button type="button" class="fv-btn" id="fv-db-back">\u2190 ' + T('Tables') + '</button>' +
               '<span class="fv-db2-ttitle">' + esc(d.table) + '</span>' +
               (rows.length
-                  ? '<span class="fv-db2-range">rows ' + from.toLocaleString() + ' to ' + to.toLocaleString() + '</span>'
-                  : '<span class="fv-db2-norows">No rows</span>') +
+                  ? '<span class="fv-db2-range">' + tf('rows %s to %s', from.toLocaleString(), to.toLocaleString()) + '</span>'
+                  : '<span class="fv-db2-norows">' + T('No rows') + '</span>') +
             '</div>';
 
         if (!rows.length && d.offset === 0) {
-            html += '<div class="fv-list-empty">This table is empty.</div>';
+            html += '<div class="fv-list-empty">' + T('This table is empty.') + '</div>';
         } else {
             html += '<div class="fv-tablewrap"><table class="fv-table"><thead><tr>';
             cols.forEach(function (c) { html += '<th>' + esc(String(c)) + '</th>'; });
@@ -1059,10 +1561,10 @@
         }
 
         html += '<div class="fv-db2-foot">' +
-                  '<span class="fv-db2-note">Values over 300 characters are clipped \u00b7 blobs shown by size</span>' +
+                  '<span class="fv-db2-note">' + T('Values over 300 characters are clipped') + ' \u00b7 ' + T('blobs shown by size') + '</span>' +
                   '<span class="fv-db2-page">' +
-                    '<button type="button" class="fv-btn" id="fv-db-prev"' + (d.offset > 0 ? '' : ' disabled') + '>\u2190 Prev 100</button>' +
-                    '<button type="button" class="fv-btn" id="fv-db-next"' + (d.more ? '' : ' disabled') + '>Next 100 \u2192</button>' +
+                    '<button type="button" class="fv-btn" id="fv-db-prev"' + (d.offset > 0 ? '' : ' disabled') + '>\u2190 ' + T('Prev 100') + '</button>' +
+                    '<button type="button" class="fv-btn" id="fv-db-next"' + (d.more ? '' : ' disabled') + '>' + T('Next 100') + ' \u2192</button>' +
                   '</span>' +
                 '</div></div>';
         _bodyEl.innerHTML = html;
@@ -1076,30 +1578,34 @@
     }
 
     function renderDoc(path, name) {
-        setPvHead(name, 'Document', 'doc');
+        setPvHead(name, T('Document'), 'doc');
         setLoading(_bodyEl);
+        var gen = _pvGen;
         Promise.all([loadLib('mammoth.browser.min.js'), fetchBytes(path)]).then(function (res) {
             return window.mammoth.convertToHtml({ arrayBuffer: res[1] });
         }).then(function (out) {
-            if (!window.DOMPurify) { _bodyEl.innerHTML = errorBox('The sanitiser did not load, so this document cannot be shown.'); return; }
+            if (gen !== _pvGen) return;
+            if (!window.DOMPurify) { _bodyEl.innerHTML = errorBox(T('The sanitiser did not load, so this document cannot be shown.')); return; }
             var html = window.DOMPurify.sanitize((out && out.value) || '');
             _bodyEl.innerHTML = '<div class="fv-doc">' + html + '</div>';
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Could not render this document.'); });
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Could not render this document.')); });
     }
 
     function renderSheet(path, name) {
-        setPvHead(name, 'Spreadsheet', 'sheet');
+        setPvHead(name, T('Spreadsheet'), 'sheet');
         setLoading(_bodyEl);
+        var gen = _pvGen;
         Promise.all([loadLib('xlsx.full.min.js'), fetchBytes(path)]).then(function (res) {
+            if (gen !== _pvGen) return;
             var wb = window.XLSX.read(new Uint8Array(res[1]), { type: 'array' });
             var names = wb.SheetNames || [];
-            if (!names.length) { _bodyEl.innerHTML = errorBox('This spreadsheet has no sheets.'); return; }
+            if (!names.length) { _bodyEl.innerHTML = errorBox(T('This spreadsheet has no sheets.')); return; }
             var tabs = '';
             for (var i = 0; i < names.length; i++) tabs += '<button type="button" class="fv-sheet__tab' + (i === 0 ? ' active' : '') + '" data-sheet="' + esc(names[i]) + '">' + esc(names[i]) + '</button>';
             _bodyEl.innerHTML = '<div class="fv-sheet"><div class="fv-sheet__tabs">' + tabs + '</div><div class="fv-tablewrap" id="fv-sheet-view"></div></div>';
             function show(n) {
                 var view = document.getElementById('fv-sheet-view');
-                if (!window.DOMPurify) { view.innerHTML = errorBox('The sanitiser did not load, so this sheet cannot be shown.'); return; }
+                if (!window.DOMPurify) { view.innerHTML = errorBox(T('The sanitiser did not load, so this sheet cannot be shown.')); return; }
                 view.innerHTML = window.DOMPurify.sanitize(window.XLSX.utils.sheet_to_html(wb.Sheets[n], { editable: false }));
             }
             var tabsEl = _bodyEl.querySelectorAll('.fv-sheet__tab');
@@ -1111,18 +1617,20 @@
                 });
             }
             show(names[0]);
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Could not open this spreadsheet.'); });
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Could not open this spreadsheet.')); });
     }
 
     function renderFont(path, name, ext) {
-        setPvHead(name, (ext ? '.' + ext : 'Font'), 'font');
+        setPvHead(name, (ext ? '.' + ext : T('Font')), 'font');
         setLoading(_bodyEl);
+        var gen = _pvGen;
         fetchBytes(path).then(function (buf) {
             var fam = 'fvfont_' + Date.now();
             var face = new FontFace(fam, buf);
             return face.load().then(function (loaded) {
+                if (gen !== _pvGen) return;
                 document.fonts.add(loaded);
-                var pangram = 'The quick brown fox jumps over the lazy dog';
+                var pangram = T('The quick brown fox jumps over the lazy dog');
                 var glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ\nabcdefghijklmnopqrstuvwxyz\n0123456789  .,:;!?()[]{}/\\&@#%';
                 var sizes = [40, 30, 22, 16], lines = '';
                 for (var i = 0; i < sizes.length; i++) lines += '<div class="fv-font__line" style="font-size:' + sizes[i] + 'px">' + esc(pangram) + '</div>';
@@ -1132,23 +1640,25 @@
                       lines +
                     '</div>';
             });
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Could not load this font.'); });
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Could not load this font.')); });
     }
 
     function renderEbook(path, name) {
-        setPvHead(name, 'E-book', 'ebook');
+        setPvHead(name, T('E-book'), 'ebook');
         setLoading(_bodyEl);
+        var gen = _pvGen;
         loadLib('jszip.min.js').then(function () {
             return loadLib('epub.min.js');
         }).then(function () {
             return fetchBytes(path);
         }).then(function (buf) {
+            if (gen !== _pvGen) return;
             _bodyEl.innerHTML =
                 '<div class="fv-ebook">' +
                   '<div class="fv-ebook__view" id="fv-ebook-view"></div>' +
                   '<div class="fv-ebook__nav">' +
-                    '<button type="button" class="fv-pv-btn" id="fv-ebook-prev">Previous</button>' +
-                    '<button type="button" class="fv-pv-btn" id="fv-ebook-next">Next</button>' +
+                    '<button type="button" class="fv-pv-btn" id="fv-ebook-prev">' + T('Previous') + '</button>' +
+                    '<button type="button" class="fv-pv-btn" id="fv-ebook-next">' + T('Next') + '</button>' +
                   '</div>' +
                 '</div>';
             var book = window.ePub(buf);
@@ -1156,7 +1666,7 @@
             rendition.display();
             document.getElementById('fv-ebook-prev').addEventListener('click', function () { rendition.prev(); });
             document.getElementById('fv-ebook-next').addEventListener('click', function () { rendition.next(); });
-        }).catch(function () { _bodyEl.innerHTML = errorBox('Could not open this e-book.'); });
+        }).catch(function () { if (gen === _pvGen) _bodyEl.innerHTML = errorBox(T('Could not open this e-book.')); });
     }
 
     function doOpen(cat, size, name, ext, path) {
@@ -1174,13 +1684,11 @@
         else                                     loadMeta(path);
     }
 
-    // sqlite leaves a -wal and a -shm next to the database. neither is a database
-    // and neither opens, so say which file to open instead of a blank refusal
     function sidecarNote(name) {
         var m = /^(.*\.(?:db|db3|sqlite|sqlite3))-(wal|shm|journal)$/i.exec(name);
         if (!m) return '';
-        var what = { wal: 'write-ahead log', shm: 'shared memory file', journal: 'rollback journal' }[m[2]];
-        return 'This is the SQLite ' + what + ' for ' + esc(m[1]) + ', not a database of its own. Open that file to browse the data.';
+        var what = { wal: T('write-ahead log'), shm: T('shared memory file'), journal: T('rollback journal') }[m[2]];
+        return tf('This is the SQLite %s for %s, not a database of its own. Open that file to browse the data.', what, m[1]);
     }
 
     function openFile(item) {
@@ -1194,14 +1702,14 @@
         var name = item.getAttribute('data-name') || '';
         var ext  = item.getAttribute('data-ext') || '';
 
+        _pvGen++;
         _selectedFile = path;
         _previewFile = { path: path, cat: cat, size: size, name: name, ext: ext };
         markActive(path);
-        _editable = false;          // a renderer flips this on for editable text
+        _editable = false;
         refreshEditBtn();
-        updateOps();                // download on, folder-add off while a file is open
+        updateOps();
 
-        // these types read the file content; everything else is a details view
         var willRead = (cat === 'code' || cat === 'md' || cat === 'audio' || cat === 'video'
                         || cat === 'pdf' || cat === 'arch'
                         || (cat === 'img'    && size > 0 && size <= _imgMaxBytes)
@@ -1212,16 +1720,14 @@
                         || (cat === 'font'   && size > 0 && size <= _fontMaxBytes));
 
         if (!willRead) {
-            // naming the limit that applied, otherwise it points at no setting the
-            // user can find and reads like the file is at fault
-            var caps = { img:   [_imgMaxBytes,   'images'],
-                         doc:   [_docMaxBytes,   'documents'],
-                         sheet: [_docMaxBytes,   'spreadsheets'],
-                         ebook: [_ebookMaxBytes, 'e-books'],
-                         font:  [_fontMaxBytes,  'fonts'] };
+            var caps = { img:   [_imgMaxBytes,   T('images')],
+                         doc:   [_docMaxBytes,   T('documents')],
+                         sheet: [_docMaxBytes,   T('spreadsheets')],
+                         ebook: [_ebookMaxBytes, T('e-books')],
+                         font:  [_fontMaxBytes,  T('fonts')] };
             var cap = caps[cat];
             loadMeta(path, (cap && size > 0)
-                ? 'This file is over the ' + formatBytes(cap[0]) + ' preview limit for ' + cap[1] + '.'
+                ? tf('This file is over the %s preview limit for %s.', formatBytes(cap[0]), cap[1])
                 : sidecarNote(name));
             return;
         }
@@ -1229,12 +1735,10 @@
         doOpen(cat, size, name, ext, path);
     }
 
-
     function clearFilter() {
         if (_filterEl && _filterEl.value !== '') _filterEl.value = '';
     }
 
-    // hides list rows whose name does not contain the query. the parent row stays
     function applyFilter() {
         if (!_filterEl) return;
         var q = _filterEl.value.trim().toLowerCase();
@@ -1252,10 +1756,10 @@
         if (_countEl) {
             var trunc = (_listEl.getAttribute('data-trunc') === '1');
             _countEl.textContent = (q === '')
-                ? (total ? (total + (trunc ? '+' : '') + ' items') : '')
-                : (shown + ' of ' + total + (trunc ? '+' : ''));
+                ? (total ? (total === 1 && !trunc ? T('1 item') : tf('%s items', total + (trunc ? '+' : ''))) : '')
+                : tf('%s of %s', shown, total + (trunc ? '+' : ''));
         }
-        if (!_previewFile) showFolderOverview();   // the pane follows the filter too
+        if (!_previewFile) showFolderOverview();
     }
 
     function visibleItems() {
@@ -1272,10 +1776,20 @@
         if (idx >= 0 && items[idx] && items[idx].scrollIntoView) items[idx].scrollIntoView({ block: 'nearest' });
     }
     function onKey(e) {
-        if (!_listEl) return;
+        if (!_listEl || _modal || _lb) return;
         var tag = e.target && e.target.tagName;
         var inFilter = (e.target === _filterEl);
-        if ((tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') && !inFilter) return;
+        var inField = (tag === 'INPUT' && e.target.type !== 'checkbox') || tag === 'TEXTAREA' || tag === 'SELECT';
+        if (inField && !inFilter) return;
+
+        if (!inFilter && (e.ctrlKey || e.metaKey) && !e.altKey && (e.key === 'a' || e.key === 'A')) {
+            if (!_editMode || !_canPick || _previewFile) return;
+            e.preventDefault();
+            selectAllVisible();
+            return;
+        }
+        if (!inFilter && e.key === 'Delete' && _deleteBtn && !_deleteBtn.disabled) { e.preventDefault(); promptDelete(); return; }
+        if (!inFilter && e.key === 'F2' && _renameBtn && !_renameBtn.disabled) { e.preventDefault(); promptRename(); return; }
 
         if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
             var items = visibleItems();
@@ -1302,17 +1816,15 @@
             }
         } else if (e.key === 'Escape') {
             if (_filterEl && _filterEl.value !== '') { clearFilter(); applyFilter(); }
-            else if (_previewFile) leaveEditOk(clearPreview);
+            else if (_previewFile || _spaceMode || _searchMode) leaveEditOk(clearPreview);
         }
     }
 
     function onListClick(ev) {
-        if (ev.target.closest && ev.target.closest('.fv-item__cb')) return;   // checkbox toggles itself
+        if (ev.target.closest && ev.target.closest('.fv-item__cb')) { onPickClick(ev); return; }
         var item = ev.target.closest ? ev.target.closest('.fv-item') : null;
         if (!item) return;
         if (item.getAttribute('data-dir') === '1') { loadDir(item.getAttribute('data-path')); return; }
-        // clicking the open row again is how people undo the click, the X in the
-        // other pane is the only other way out and nobody finds it
         if (_previewFile && _previewFile.path === item.getAttribute('data-path')) {
             leaveEditOk(clearPreview);
             return;
@@ -1327,10 +1839,6 @@
         loadDir(a.getAttribute('data-path') || '');
     }
 
-    // the toolbar file ops act on the ticked rows, not on what is previewed. a
-    // new listing clears the selection (renderList resets _selected).
-
-    // both panes read the same selection, so whichever is hidden still agrees
     function syncListChecks() {
         var rows = _listEl.querySelectorAll('.fv-item');
         for (var i = 0; i < rows.length; i++) {
@@ -1344,48 +1852,73 @@
     function selectedPaths() { return Object.keys(_selected); }
     function selCount() { return selectedPaths().length; }
 
-    // the lone ticked row is a file (a folder cannot be downloaded)
     function singleSelectedFile() {
         var p = selectedPaths();
         if (p.length !== 1) return false;
         var row = findRow(p[0]);
         return !!row && row.getAttribute('data-dir') === '0';
     }
+    function onlyArchivesSelected() {
+        var p = selectedPaths();
+        if (!p.length) return false;
+        for (var i = 0; i < p.length; i++) {
+            var e = null;
+            for (var k = 0; k < _lastEntries.length; k++) if (_lastEntries[k].path === p[i]) { e = _lastEntries[k]; break; }
+            if (!e || e.is_dir || e.category !== 'arch') return false;
+        }
+        return true;
+    }
+    function singleSelectedFolder() {
+        var p = selectedPaths();
+        if (p.length !== 1) return '';
+        var row = findRow(p[0]);
+        return (row && row.getAttribute('data-dir') === '1') ? p[0] : '';
+    }
 
     function updateOps() {
         var n = selCount();
         var hasPv = !!(_previewFile && _previewFile.path);
         var w = _editMode;
-        if (_dlBtn)     _dlBtn.disabled     = !(hasPv || singleSelectedFile());
+        if (_dlBtn)     _dlBtn.disabled     = !(hasPv || n >= 1);
+        if (_pathBtn)   _pathBtn.disabled   = !pathForCopy();
+        if (_locateBtn) _locateBtn.disabled = !locatePath();
+        if (_searchBtn) _searchBtn.disabled = !_inFolder;
+        if (_hashBtn)   _hashBtn.disabled   = !focusedFile();
+        if (_rawBtn)    _rawBtn.disabled    = !(_rawOk || singleSelectedFile());
         if (_renameBtn) _renameBtn.disabled = !(w && n === 1);
         if (_deleteBtn) _deleteBtn.disabled = !(w && n >= 1);
         if (_ownerBtn)  _ownerBtn.disabled  = !(w && n >= 1);
         if (_permBtn)   _permBtn.disabled   = !(w && n >= 1);
         if (_copyBtn)   _copyBtn.disabled   = !(w && n >= 1);
         if (_moveBtn)   _moveBtn.disabled   = !(w && n >= 1);
+        var onlyArch = w && n >= 1 && onlyArchivesSelected();
+        if (_compressBtn) _compressBtn.disabled = !(w && n >= 1) || onlyArch;
         var add = w && _inFolder;
         if (_createBtn) _createBtn.disabled = !add;
         if (_uploadBtn) _uploadBtn.disabled = !add;
         if (_recycleBtn) _recycleBtn.disabled = !w;
-        if (_spaceBtn) _spaceBtn.disabled = !_inFolder;   // read only, works in either mode
+        if (_spaceBtn) _spaceBtn.disabled = !_inFolder;
 
-        // a greyed out button with its own name on the tooltip tells the user
-        // nothing. say which of the two things is missing instead
-        var need = !w ? 'Turn on editing with the eye icon at the top right'
-                      : (n === 0 ? 'Tick the files you want this to act on' : '');
-        whyOff(_renameBtn, 'Rename', w && n > 1 ? 'Rename works on one file at a time' : need);
-        whyOff(_deleteBtn, 'Delete', need);
-        whyOff(_ownerBtn,  'Change owner', need);
-        whyOff(_permBtn,   'Change permissions', need);
-        whyOff(_copyBtn,   'Copy', need);
-        whyOff(_moveBtn,   'Move', need);
-        whyOff(_createBtn, 'Create', !w ? 'Turn on editing with the eye icon at the top right'
-                                        : (!_inFolder ? 'Open a folder first' : ''));
-        whyOff(_uploadBtn, 'Upload', !w ? 'Turn on editing with the eye icon at the top right'
-                                        : (!_inFolder ? 'Open a folder first' : ''));
-        whyOff(_recycleBtn, 'Recycle Bin', !w ? 'Turn on editing with the eye icon at the top right' : '');
-        whyOff(_dlBtn, 'Download', 'Open a file, or tick a single one');
-        whyOff(_spaceBtn, 'Analyse folder space', 'Open a folder first');
+        var eye  = T('Turn on editing with the eye icon at the top right');
+        var need = !w ? eye : (n === 0 ? T('Tick the files you want this to act on') : '');
+        whyOff(_renameBtn, T('Rename'), w && n > 1 ? T('Rename works on one file at a time') : need);
+        whyOff(_deleteBtn, T('Delete'), need);
+        whyOff(_ownerBtn,  T('Change owner'), need);
+        whyOff(_permBtn,   T('Change permissions'), need);
+        whyOff(_copyBtn,   T('Copy'), need);
+        whyOff(_moveBtn,   T('Move'), need);
+        whyOff(_compressBtn, T('Compress'), onlyArch ? (n === 1 ? T('This is already an archive') : T('These are already archives')) : need);
+        whyOff(_createBtn, T('Create'), !w ? eye : (!_inFolder ? T('Open a folder first') : ''));
+        whyOff(_uploadBtn, T('Upload'), !w ? eye : (!_inFolder ? T('Open a folder first') : ''));
+        whyOff(_recycleBtn, T('Recycle Bin'), !w ? eye : '');
+        whyOff(_dlBtn, T('Download'), T('Open a file, or tick the items to download'));
+        whyOff(_pathBtn, T('Copy the path to the clipboard'), T('Open a folder first'));
+        whyOff(_locateBtn, T('Which disk holds this'), T('Open a folder on a disk, a pool or a share first'));
+        whyOff(_searchBtn, singleSelectedFolder() ? T('Search below the ticked folder') : T('Search below this folder'), T('Open a folder first'));
+        whyOff(_hashBtn, T('Checksum of the open or ticked file'), T('Open or tick a file first'));
+        whyOff(_rawBtn, T('Open the file in a new tab'), T('Open or tick a file first'));
+        whyOff(_wrapBtn, T('Toggle line wrapping'), T('Open a text file first'));
+        whyOff(_spaceBtn, singleSelectedFolder() ? T('Analyse the space of the ticked folder') : T('Analyse folder space'), T('Open a folder first'));
     }
 
     function whyOff(btn, label, reason) {
@@ -1393,8 +1926,6 @@
         btn.title = (btn.disabled && reason) ? reason : label;
     }
 
-    // header toggle: preview only vs editing allowed. switching drops the selection
-    // so no hidden ticks survive, and the icon flips between an eye and a pencil
     function setMode(edit) {
         _editMode = !!edit;
         if (_rootEl) _rootEl.classList.toggle('fv-edit', _editMode);
@@ -1402,47 +1933,46 @@
         if (mb) {
             var ic = mb.querySelector('i');
             if (ic) ic.className = 'fa fa-fw ' + (_editMode ? 'fa-pencil' : 'fa-eye');
-            mb.title = _editMode ? 'Editing on - click for preview only' : 'Preview only - click to allow editing';
+            mb.title = _editMode ? T('Editing on - click for preview only') : T('Preview only - click to allow editing');
         }
         _selected = {};
         if (_listEl) {
             var cbs = _listEl.querySelectorAll('.fv-rowcb');
             for (var i = 0; i < cbs.length; i++) cbs[i].checked = false;
         }
-        if (!_previewFile) showFolderOverview();   // the tick column follows this switch
+        if (!_previewFile) showFolderOverview();
         updateSelUi();
         refreshEditBtn();
+        refreshExtractBtn();
     }
 
-    // paint the ticked rows, sync the header checkbox and the count, refresh ops
+    function syncTableChecks() {
+        if (!_bodyEl) return;
+        var rows = _bodyEl.querySelectorAll('.fv-fo__row[data-path]');
+        var total = 0, n = 0;
+        for (var i = 0; i < rows.length; i++) {
+            if (rows[i].classList.contains('fv-fo__row--up')) continue;
+            var on = !!_selected[rows[i].getAttribute('data-path')];
+            var cb = rows[i].querySelector('.fv-focb');
+            if (cb) { cb.checked = on; total++; if (on) n++; }
+            rows[i].classList.toggle('selected', on);
+        }
+        var all = document.getElementById('fv-fo-all');
+        if (all) { all.checked = (n > 0 && n === total); all.indeterminate = (n > 0 && n < total); }
+    }
+
     function updateSelUi() {
         var rows = _listEl.querySelectorAll('.fv-item');
         for (var i = 0; i < rows.length; i++) {
             rows[i].classList.toggle('selected', !!_selected[rows[i].getAttribute('data-path')]);
         }
-        var total = _listEl.querySelectorAll('.fv-rowcb').length;
-        var n = selCount();
-        var all = document.getElementById('fv-selall');
-        if (all) { all.checked = (n > 0 && n === total); all.indeterminate = (n > 0 && n < total); }
-        var lbl = document.getElementById('fv-sel-count');
-        if (lbl) lbl.textContent = n > 0 ? (n + ' selected') : (total + (total === 1 ? ' item' : ' items'));
+        syncTableChecks();
         updateOps();
     }
 
-    // delegated: the header select-all, or one row checkbox
     function onListChange(ev) {
         var t = ev.target;
         if (!t) return;
-        if (t.id === 'fv-selall') {
-            var on = t.checked, cbs = _listEl.querySelectorAll('.fv-rowcb');
-            _selected = {};
-            for (var i = 0; i < cbs.length; i++) {
-                cbs[i].checked = on;
-                if (on) { var r = cbs[i].closest('.fv-item'); if (r) _selected[r.getAttribute('data-path')] = true; }
-            }
-            updateSelUi();
-            return;
-        }
         if (t.classList && t.classList.contains('fv-rowcb')) {
             var row = t.closest('.fv-item');
             if (!row) return;
@@ -1452,13 +1982,9 @@
         }
     }
 
-    // one small overlay built on demand, shared by create, rename and delete.
-    // esc cancels, enter confirms, a click on the backdrop cancels. it carries
-    // the light-theme class itself since it lives on the body, outside the wrapper.
-
     var _modal = null;
 
-    var _modalOnClose = null;   // fires when a modal goes away without its OK
+    var _modalOnClose = null;
 
     function modalClose() {
         if (_modal && _modal.parentNode) _modal.parentNode.removeChild(_modal);
@@ -1470,6 +1996,7 @@
     }
     function modalKey(e) {
         if (!_modal) return;
+        e.stopPropagation();
         if (e.key === 'Escape') { e.preventDefault(); modalClose(); return; }
         if (e.key === 'Enter') {
             if (document.activeElement && document.activeElement.tagName === 'TEXTAREA') return;
@@ -1477,19 +2004,18 @@
             if (ok && !ok.disabled) { e.preventDefault(); ok.click(); }
         }
     }
-    // build the shell, wire cancel and backdrop, run onOk(overlay) on confirm.
-    // returns the overlay so the caller can read its inputs.
     function modalOpen(title, inner, okLabel, okClass, onOk, okOnly) {
         modalClose();
         var ov = document.createElement('div');
         ov.className = 'fv-modal' + (_cfg.lightTheme ? ' fv-light' : '') +
                        (_cfg.theme ? ' fv-theme-' + _cfg.theme : '');
+        if (_cfg.lang) ov.lang = _cfg.lang;
         ov.innerHTML =
             '<div class="fv-modal__panel" role="dialog" aria-modal="true">' +
               '<div class="fv-modal__head">' + esc(title) + '</div>' +
               '<div class="fv-modal__body">' + inner + '</div>' +
               '<div class="fv-modal__foot">' +
-                (okOnly ? '' : '<button type="button" class="fv-btn fv-modal__cancel">Cancel</button>') +
+                (okOnly ? '' : '<button type="button" class="fv-btn fv-modal__cancel">' + T('Cancel') + '</button>') +
                 '<button type="button" class="fv-btn ' + (okClass || 'fv-btn--primary') + ' fv-modal__ok">' + esc(okLabel || 'OK') + '</button>' +
               '</div>' +
             '</div>';
@@ -1502,9 +2028,8 @@
         document.addEventListener('keydown', modalKey, true);
         return ov;
     }
-    // a one-button message, used to report partial failures
     function noteModal(title, html) {
-        modalOpen(title, html, 'Close', 'fv-btn--primary', function () { modalClose(); }, true);
+        modalOpen(title, html, T('Close'), 'fv-btn--primary', function () { modalClose(); }, true);
     }
     function modalError(ov, msg) {
         var e = ov.querySelector('.fv-modal__err');
@@ -1515,11 +2040,7 @@
         if (ok) ok.disabled = !!on;
     }
 
-
-    // the star pins whatever the crumbs point at, a file when one is open and the
-    // folder otherwise. the menu shows names only, the full path is the tooltip.
-
-    var _favs    = [];      // [{path, name, is_dir}]
+    var _favs    = [];
     var _favOpen = false;
 
     function favTarget() {
@@ -1537,8 +2058,8 @@
         var on = !!t && favHas(t);
         _starEl.disabled = !t;
         _starEl.setAttribute('aria-pressed', on ? 'true' : 'false');
-        _starEl.title = !t ? 'Favourites'
-                           : (on ? 'Remove from favourites' : 'Add to favourites');
+        _starEl.title = !t ? T('Favourites')
+                           : (on ? T('Remove from favourites') : T('Add to favourites'));
     }
 
     function favLoad() {
@@ -1551,7 +2072,7 @@
         var t = favTarget();
         if (!t) return;
         postJson('fav_toggle', { path: t }).then(function (d) {
-            if (!d || !d.ok) { noteModal('Favourites', esc((d && d.error) || 'could not save')); return; }
+            if (!d || !d.ok) { noteModal(T('Favourites'), esc((d && d.error) || T('could not save'))); return; }
             _favs = d.entries || [];
             refreshStar();
             if (_favOpen) favRender();
@@ -1561,7 +2082,7 @@
     function favRender() {
         if (!_favMenuEl) return;
         if (!_favs.length) {
-            _favMenuEl.innerHTML = '<div class="fv-fav-empty">No favourites yet</div>';
+            _favMenuEl.innerHTML = '<div class="fv-fav-empty">' + T('No favourites yet') + '</div>';
             return;
         }
         var h = '';
@@ -1583,7 +2104,6 @@
 
     function favMenuToggle() {
         if (_favOpen) { favMenuClose(); return; }
-        // the list is re-read on open, so a folder deleted elsewhere drops out here
         favLoad().then(function () {
             favRender();
             _favOpen = true;
@@ -1599,14 +2119,12 @@
         if (!f) return;
         if (f.is_dir) { loadDir(path); return; }
 
-        // a file favourite lands in its folder and opens straight away
         var parent = path.replace(/\/[^/]+$/, '');
         loadDir(parent).then(function () {
             var row = findRow(path);
             if (row) openFile(row);
         });
     }
-
 
     function baseName(p) {
         var s = String(p || '').replace(/\/+$/, '');
@@ -1620,11 +2138,8 @@
         }
         return null;
     }
-    function opMsg(label, d) { return (d && d.error) ? (label + ': ' + d.error) : (label + ' failed.'); }
+    function opMsg(label, d) { return (d && d.error) ? (label + ': ' + d.error) : tf('%s failed.', label); }
 
-    // owner and mode are part of the row, so a chmod or a chown leaves the list
-    // lying. rewrite those rows only: the ticks, the scroll position and an open
-    // preview all survive, which a full reload would not
     function refreshRows(paths) {
         if (!_currentPath || !paths || !paths.length) return;
         var want = {};
@@ -1639,11 +2154,15 @@
                 var row = findRow(e.path);
                 var sub = row ? row.querySelector('.fv-item__sub') : null;
                 if (sub) sub.innerHTML = itemSub(e);
+                for (var k = 0; k < _lastEntries.length; k++) {
+                    if (_lastEntries[k].path === e.path) { _lastEntries[k] = e; break; }
+                }
+                var tr = _bodyEl ? _bodyEl.querySelector('.fv-fo__row[data-path="' + cssEsc(e.path) + '"]') : null;
+                if (tr) tr.outerHTML = foRowHtml(e, _editMode);
             }
         }).catch(function () {});
     }
 
-    // reload the open folder, then highlight an item by path if asked
     function refreshAfter(selectPath) {
         return loadDir(_currentPath).then(function () {
             if (!selectPath) return;
@@ -1655,20 +2174,20 @@
     function promptCreate() {
         if (!_currentPath) return;
         var inner =
-            '<label class="fv-field"><span>Name</span>' +
+            '<label class="fv-field"><span>' + T('Name') + '</span>' +
               '<input type="text" class="fv-input" id="fv-new-name" autocomplete="off" spellcheck="false" placeholder="new-file.txt"></label>' +
             '<div class="fv-radio">' +
-              '<label><input type="radio" name="fv-kind" value="file" checked> File</label>' +
-              '<label><input type="radio" name="fv-kind" value="dir"> Folder</label>' +
+              '<label><input type="radio" name="fv-kind" value="file" checked> ' + T('File') + '</label>' +
+              '<label><input type="radio" name="fv-kind" value="dir"> ' + T('Folder') + '</label>' +
             '</div>' +
             '<div class="fv-modal__err" style="display:none"></div>';
-        var ov = modalOpen('Create in this folder', inner, 'Create', 'fv-btn--primary', function (ov) {
+        var ov = modalOpen(T('Create in this folder'), inner, T('Create'), 'fv-btn--primary', function (ov) {
             var name = (ov.querySelector('#fv-new-name').value || '').trim();
             var kind = ov.querySelector('input[name="fv-kind"]:checked').value;
-            if (!name) { modalError(ov, 'Enter a name.'); return; }
+            if (!name) { modalError(ov, T('Enter a name.')); return; }
             modalBusy(ov, true);
             postJson('create', { parent: _currentPath, name: name, kind: kind }).then(function (d) {
-                if (!d || !d.ok) { modalBusy(ov, false); modalError(ov, opMsg('Create', d)); return; }
+                if (!d || !d.ok) { modalBusy(ov, false); modalError(ov, opMsg(T('Create'), d)); return; }
                 modalClose();
                 refreshAfter(d.path);
             });
@@ -1676,22 +2195,21 @@
         ov.querySelector('#fv-new-name').focus();
     }
 
-    // rename the single ticked item (file or folder)
     function promptRename() {
         var paths = selectedPaths();
         if (paths.length !== 1) return;
         var target = paths[0], cur = baseName(target);
         var inner =
-            '<label class="fv-field"><span>New name</span>' +
+            '<label class="fv-field"><span>' + T('New name') + '</span>' +
               '<input type="text" class="fv-input" id="fv-rn-name" autocomplete="off" spellcheck="false"></label>' +
             '<div class="fv-modal__err" style="display:none"></div>';
-        var ov = modalOpen('Rename', inner, 'Rename', 'fv-btn--primary', function (ov) {
+        var ov = modalOpen(T('Rename'), inner, T('Rename'), 'fv-btn--primary', function (ov) {
             var name = (ov.querySelector('#fv-rn-name').value || '').trim();
-            if (!name) { modalError(ov, 'Enter a name.'); return; }
+            if (!name) { modalError(ov, T('Enter a name.')); return; }
             if (name === cur) { modalClose(); return; }
             modalBusy(ov, true);
             postJson('rename', { path: target, name: name }).then(function (d) {
-                if (!d || !d.ok) { modalBusy(ov, false); modalError(ov, opMsg('Rename', d)); return; }
+                if (!d || !d.ok) { modalBusy(ov, false); modalError(ov, opMsg(T('Rename'), d)); return; }
                 modalClose();
                 refreshAfter(d.path);
             });
@@ -1700,26 +2218,22 @@
         inp.value = cur;
         var dot = cur.lastIndexOf('.');
         inp.focus();
-        if (dot > 0) inp.setSelectionRange(0, dot); else inp.select();   // skip the extension, like a desktop fm
+        if (dot > 0) inp.setSelectionRange(0, dot); else inp.select();
     }
 
-    // permanent delete of the ticked set, behind a confirm. items go one by one
-    // through the single-path endpoint, the bulk path goes to the worker. the
-    // trash mode rides on the same call once the recycle bin exists.
     function promptDelete() {
         var paths = selectedPaths();
         if (!paths.length) return;
-        // the bin lives inside a share, an item straight under /mnt/<disk> has none
         var noBin = paths[0].split('/').filter(Boolean).length < 4;
-        var what  = paths.length === 1 ? '<b>' + esc(baseName(paths[0])) + '</b>' : '<b>' + paths.length + ' items</b>';
+        var what  = paths.length === 1 ? '<b>' + esc(baseName(paths[0])) + '</b>' : '<b>' + tf('%s items', paths.length) + '</b>';
         var inner =
             '<p class="fv-confirm">' + (_recycleOn && !noBin
-                ? 'Move ' + what + ' to the Recycle Bin?'
-                : 'Permanently delete ' + what + '? This cannot be undone.' +
-                  (_recycleOn ? ' The recycle bin lives inside each share, and there is none at this level.' : '')) +
+                ? tf('Move %s to the Recycle Bin?', what)
+                : tf('Permanently delete %s? This cannot be undone.', what) +
+                  (_recycleOn ? ' ' + T('The recycle bin lives inside each share, and there is none at this level.') : '')) +
             '</p>' +
             '<div class="fv-modal__err" style="display:none"></div>';
-        modalOpen('Delete', inner, 'Delete', 'fv-btn--danger', function (ov) {
+        modalOpen(T('Delete'), inner, T('Delete'), 'fv-btn--danger', function (ov) {
             modalBusy(ov, true);
             postJson('delete', { paths: JSON.stringify(paths) }).then(function (d) {
                 modalClose();
@@ -1727,9 +2241,9 @@
                 refreshAfter(null).then(function () {
                     var failed = (d && d.failed) || [];
                     if (!d || !d.ok) {
-                        noteModal('Delete', '<p class="fv-confirm">' + esc((d && d.error) || 'Delete failed.') + '</p>');
+                        noteModal(T('Delete'), '<p class="fv-confirm">' + esc((d && d.error) || T('Delete failed.')) + '</p>');
                     } else if (failed.length) {
-                        noteModal('Delete', '<p class="fv-confirm">Some items were not deleted:</p>' +
+                        noteModal(T('Delete'), '<p class="fv-confirm">' + T('Some items were not deleted:') + '</p>' +
                             '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + failed.map(esc).join('<br>') + '</p>');
                     }
                 });
@@ -1737,9 +2251,8 @@
         });
     }
 
-
-    var UPLOAD_CHUNK = 1024 * 1024;   // 1 MiB raw per chunk (base64 grows it ~1.4x)
-    var UPLOAD_PARALLEL = 4;          // files uploaded at once - under the browser's 6-conn cap, leaves room for the rest of the gui
+    var UPLOAD_CHUNK = 1024 * 1024;
+    var UPLOAD_PARALLEL = 4;
 
     function uid12() {
         var c = '0123456789abcdefghijklmnopqrstuvwxyz', s = '';
@@ -1747,20 +2260,13 @@
         return s;
     }
 
-    // pick or drop files, or a whole folder, then a small pool uploads several
-    // files at once, each with its own bar. a file is sent in base64 chunks over a
-    // plain form post (the transport the official file manager uses), which is
-    // reliable through unraid's nginx and fpm. folder uploads carry a relative
-    // subpath the server recreates under the destination.
-
-    var _uploadMode = false;     // the preview pane is showing the uploader
-    var _upQueue = [];           // queued items: { file, name, subpath }
-    var _upBusy = false;         // an upload run is in progress
-    var _upActive = null;        // running run, exposes kill() so closing the pane stops it
+    var _uploadMode = false;
+    var _upQueue = [];
+    var _upActive = null;
 
     function resetUpload() {
         if (_upActive) { _upActive.kill(); _upActive = null; }
-        _uploadMode = false; _upBusy = false; _upQueue = [];
+        _uploadMode = false; _upQueue = [];
     }
 
     function upLabelHtml(it) {
@@ -1768,7 +2274,7 @@
     }
 
     function enterUploadMode() {
-        if (!_currentPath) return;             // the roots view has no target folder
+        if (!_currentPath) return;
         leaveEditOk(function () { enterUploadModeNow(); });
     }
 
@@ -1787,22 +2293,22 @@
     function renderUploadIdle() {
         _bodyEl.innerHTML =
             '<div class="fv-uppanel">' +
-              '<div class="fv-uppanel__title">Upload to <span>' + esc(baseName(_currentPath || '/')) + '</span></div>' +
+              '<div class="fv-uppanel__title">' + tf('Upload to %s', '<span>' + esc(baseName(_currentPath || '/')) + '</span>') + '</div>' +
               '<div class="fv-up2-drop" id="fv-up-drop">' +
                 '<svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 13v8"/><path d="M8 17l4-4 4 4"/><path d="M20 16.6A5 5 0 0 0 18 7h-1.3A8 8 0 1 0 4 14.9"/></svg>' +
-                '<p>Drop files or a folder here</p>' +
+                '<p>' + T('Drop files or a folder here') + '</p>' +
                 '<div class="fv-up2-pickers">' +
-                  '<button type="button" class="fv-btn" id="fv-up-pick">Choose files</button>' +
-                  '<button type="button" class="fv-btn" id="fv-up-pickdir">Choose folder</button>' +
+                  '<button type="button" class="fv-btn" id="fv-up-pick">' + T('Choose files') + '</button>' +
+                  '<button type="button" class="fv-btn" id="fv-up-pickdir">' + T('Choose folder') + '</button>' +
                 '</div>' +
                 '<input type="file" id="fv-up-input" multiple style="display:none">' +
                 '<input type="file" id="fv-up-inputdir" webkitdirectory style="display:none">' +
               '</div>' +
               '<div class="fv-up2-list" id="fv-up-list"></div>' +
-              '<label class="fv-check"><input type="checkbox" id="fv-up-over"> Overwrite files with the same name</label>' +
+              '<label class="fv-check"><input type="checkbox" id="fv-up-over"> ' + T('Overwrite files with the same name') + '</label>' +
               '<div class="fv-up2-actions">' +
-                '<button type="button" class="fv-btn" id="fv-up-cancel">Cancel</button>' +
-                '<button type="button" class="fv-btn fv-btn--primary" id="fv-up-go" disabled>Upload</button>' +
+                '<button type="button" class="fv-btn" id="fv-up-cancel">' + T('Cancel') + '</button>' +
+                '<button type="button" class="fv-btn fv-btn--primary" id="fv-up-go" disabled>' + T('Upload') + '</button>' +
               '</div>' +
             '</div>';
 
@@ -1812,13 +2318,13 @@
         function renderQueue() {
             list.innerHTML = _upQueue.map(function (it, i) {
                 return '<div class="fv-up2-row">' +
-                         '<button type="button" class="fv-up2-del" data-i="' + i + '" title="Remove" aria-label="Remove">\u00d7</button>' +
+                         '<button type="button" class="fv-up2-del" data-i="' + i + '" title="' + T('Remove') + '" aria-label="' + T('Remove') + '">\u00d7</button>' +
                          '<span class="fv-up2-name">' + upLabelHtml(it) + '</span>' +
                          '<span class="fv-up2-size">' + fmtBytes(it.file.size) + '</span>' +
                        '</div>';
             }).join('');
             go.disabled = !_upQueue.length;
-            go.textContent = _upQueue.length ? ('Upload ' + _upQueue.length + (_upQueue.length === 1 ? ' file' : ' files')) : 'Upload';
+            go.textContent = _upQueue.length ? (_upQueue.length === 1 ? tf('Upload %s file', 1) : tf('Upload %s files', _upQueue.length)) : T('Upload');
         }
         function pushPlain(fileList) {
             for (var i = 0; i < fileList.length; i++) _upQueue.push({ file: fileList[i], name: fileList[i].name, subpath: '' });
@@ -1875,7 +2381,6 @@
         renderQueue();
     }
 
-    // recursively collect { file, name, subpath } from a dropped file/dir entry
     function walkEntry(entry, prefix, out, after) {
         if (entry.isFile) {
             entry.file(function (f) { out.push({ file: f, name: f.name, subpath: prefix }); after(); }, after);
@@ -1893,17 +2398,14 @@
         } else { after(); }
     }
 
-    // run the queue with a small pool: workers each own a bar; when a worker's file
-    // finishes, the same bar shows the next queued file (cpanel style)
     function startPanelUpload(items, conflict) {
-        _upBusy = true;
         var total = items.length, totalBytes = 0;
         items.forEach(function (it) { totalBytes += it.file.size; });
         var qi = 0, done = 0, completedBytes = 0, failed = [], cancelled = false, finished = false, killed = false;
         var workers = Math.min(UPLOAD_PARALLEL, total) || 1;
         var activeWorkers = workers;
-        var live = {};               // worker id -> bytes sent for its current file
-        var controls = {};           // worker id -> abort control
+        var live = {};
+        var controls = {};
 
         _upActive = { kill: function () { killed = true; cancelled = true; for (var k in controls) { if (controls[k] && controls[k].abort) controls[k].abort(); } } };
 
@@ -1911,7 +2413,7 @@
             '<div class="fv-uppanel">' +
               '<div class="fv-up2-overall"><span id="fv-up-done"></span><span class="sub" id="fv-up-bytes"></span></div>' +
               '<div class="fv-up2-slots" id="fv-up-slots"></div>' +
-              '<div class="fv-up2-actions"><button type="button" class="fv-btn fv-btn--danger" id="fv-up-stop">Cancel</button></div>' +
+              '<div class="fv-up2-actions"><button type="button" class="fv-btn fv-btn--danger" id="fv-up-stop">' + T('Cancel') + '</button></div>' +
             '</div>';
         var slotsEl = _bodyEl.querySelector('#fv-up-slots');
         var doneEl  = _bodyEl.querySelector('#fv-up-done');
@@ -1920,7 +2422,7 @@
 
         stopBtn.addEventListener('click', function () {
             if (finished) { clearPreview(); return; }
-            cancelled = true; stopBtn.disabled = true; stopBtn.textContent = 'Cancelling\u2026';
+            cancelled = true; stopBtn.disabled = true; stopBtn.textContent = T('Cancelling') + '\u2026';
             for (var k in controls) { if (controls[k] && controls[k].abort) controls[k].abort(); }
         });
 
@@ -1928,8 +2430,8 @@
             if (killed) return;
             var sent = completedBytes; for (var k in live) sent += live[k];
             if (sent > totalBytes) sent = totalBytes;
-            doneEl.innerHTML = '<b>' + done + '</b> of ' + total + (total === 1 ? ' file' : ' files') + ' done';
-            bytesEl.textContent = fmtBytes(sent) + ' of ' + fmtBytes(totalBytes) + ' \u00b7 ' + workers + ' at once';
+            doneEl.innerHTML = (total === 1 ? tf('%s of %s file done', '<b>' + done + '</b>', total) : tf('%s of %s files done', '<b>' + done + '</b>', total));
+            bytesEl.textContent = tf('%s of %s', fmtBytes(sent), fmtBytes(totalBytes)) + ' \u00b7 ' + tf('%s at once', workers);
         }
         function makeSlot() {
             var el = document.createElement('div');
@@ -1940,15 +2442,16 @@
             return { el: el, name: el.querySelector('.fv-up2-item__name'), pct: el.querySelector('.fv-up2-item__pct'), fill: el.querySelector('.fv-up2-fill') };
         }
         function finish() {
-            if (finished || killed) return; finished = true; _upActive = null; _upBusy = false;
-            loadDir(_currentPath);          // refresh the listing now; this clears the preview synchronously
-            var msg = cancelled ? ('Upload cancelled' + (done ? (' \u2014 ' + (total - failed.length) + ' of ' + total + ' uploaded') : '') + '.')
-                    : (failed.length === total ? 'Upload failed.' : ('Done \u2014 ' + (total - failed.length) + ' of ' + total + (total === 1 ? ' file' : ' files') + ' uploaded.'));
-            var extra = failed.length ? '<div class="fv-up2-failed">Failed:<br>' + failed.map(esc).join('<br>') + '</div>' : '';
+            if (finished || killed) return; finished = true; _upActive = null;
+            loadDir(_currentPath);
+            var okN = total - failed.length;
+            var msg = cancelled ? (T('Upload cancelled') + (done ? (' \u2014 ' + tf('%s of %s uploaded', okN, total)) : '') + '.')
+                    : (failed.length === total ? T('Upload failed.') : (T('Done') + ' \u2014 ' + tf('%s of %s uploaded', okN, total) + '.'));
+            var extra = failed.length ? '<div class="fv-up2-failed">' + T('Failed:') + '<br>' + failed.map(esc).join('<br>') + '</div>' : '';
             _bodyEl.innerHTML =
                 '<div class="fv-uppanel">' +
                   '<div class="fv-up2-msg">' + esc(msg) + '</div>' + extra +
-                  '<div class="fv-up2-actions"><button type="button" class="fv-btn fv-btn--primary" id="fv-up-close">Close</button></div>' +
+                  '<div class="fv-up2-actions"><button type="button" class="fv-btn fv-btn--primary" id="fv-up-close">' + T('Close') + '</button></div>' +
                 '</div>';
             var cb = _bodyEl.querySelector('#fv-up-close');
             if (cb) cb.addEventListener('click', function () { clearPreview(); });
@@ -1994,11 +2497,11 @@
             var end = Math.min(offset + UPLOAD_CHUNK, file.size);
             var last = end >= file.size;
             var reader = new FileReader();
-            reader.onerror = function () { if (!stopped) onDone(false, 'read error'); };
+            reader.onerror = function () { if (!stopped) onDone(false, T('read error')); };
             reader.onloadend = function (e) {
                 if (stopped) return;
                 if (!e.target || e.target.readyState !== FileReader.DONE) return;
-                var b64; try { b64 = btoa(e.target.result); } catch (err) { onDone(false, 'encode error'); return; }
+                var b64; try { b64 = btoa(e.target.result); } catch (err) { onDone(false, T('encode error')); return; }
                 var body = 'csrf_token=' + encodeURIComponent(csrfToken()) +
                            '&uid=' + encodeURIComponent(uid) +
                            '&dest=' + encodeURIComponent(_currentPath) +
@@ -2026,17 +2529,13 @@
                     offset = end; onProg(offset);
                     if (last) onDone(true); else step();
                 }).catch(function (e) {
-                    onDone(false, (e && e.name === 'AbortError') ? 'cancelled' : 'network error');
+                    onDone(false, (e && e.name === 'AbortError') ? T('cancelled') : T('network error'));
                 });
             };
             reader.readAsBinaryString(file.slice(offset, end));
         }
         step();
     }
-
-    // ranks what a folder holds by allocated disk space. the scan runs as a
-    // detached worker job started with space_start; the pane polls job_status and
-    // can cancel it. clicking a folder row drills in: navigate there, scan again.
 
     var _spaceMode = false;
     var _spJobId = '';
@@ -2050,12 +2549,12 @@
         _spaceMode = false; _spJobId = ''; _spCancelling = false;
     }
 
-    // the pane modes are exclusive: entering one always clears the others
-    function resetPaneModes() { resetUpload(); resetRecycle(); resetSpace(); }
+    function resetPaneModes() { resetUpload(); resetRecycle(); resetSpace(); resetSearch(); }
 
     function enterSpaceMode() {
-        if (!_currentPath) return;
-        leaveEditOk(function () { startSpaceScan(_currentPath, true); });
+        var target = singleSelectedFolder() || _currentPath;
+        if (!target) return;
+        leaveEditOk(function () { startSpaceScan(target, true); });
     }
 
     function startSpaceScan(path, takeover) {
@@ -2071,7 +2570,7 @@
             if (_pvToolsEl) _pvToolsEl.innerHTML = '';
             setFileTools(false, false);
         }
-        _bodyEl.innerHTML = '<div class="fv-sppanel">' + spHead('') + '<div class="fv-sp-line">Starting the scan\u2026</div></div>';
+        _bodyEl.innerHTML = '<div class="fv-sppanel">' + spHead('') + '<div class="fv-sp-line">' + T('Starting the scan') + '\u2026</div></div>';
         postJson('space_start', { path: path }).then(function (d) {
             if (!_spaceMode) return;
             if (!d || !d.ok) { renderSpaceError((d && d.error) || 'failed'); return; }
@@ -2087,13 +2586,13 @@
         fetchJson('job_status', 'id=' + encodeURIComponent(_spJobId)).then(function (d) {
             if (!_spaceMode || !_spJobId) return;
             var st = d && d.status;
-            if (!d || !d.ok || !st) { stopSpacePoll(); renderSpaceError((d && d.error) || 'job lost'); return; }
+            if (!d || !d.ok || !st) { stopSpacePoll(); renderSpaceError((d && d.error) || T('job lost')); return; }
             if (st.state === 'running' || st.state === 'queued') { renderSpaceProgress(st); return; }
             stopSpacePoll();
             if (st.state === 'done') renderSpaceResult(st);
             else if (st.state === 'cancelled') renderSpaceCancelled();
-            else renderSpaceError(st.message || 'scan failed');
-        }).catch(function () {});   // transient poll errors: just try again on the next tick
+            else renderSpaceError(st.message || T('scan failed'));
+        }).catch(function () {});
     }
 
     function stopSpacePoll() {
@@ -2103,11 +2602,9 @@
     }
 
     function spHead(btnHtml) {
-        return '<div class="fv-sp-top"><div class="fv-sp-title">Space usage <span>\u00b7 ' + esc(baseName(_spPath || '/')) + '</span></div>' + btnHtml + '</div>';
+        return '<div class="fv-sp-top"><div class="fv-sp-title">' + T('Space usage') + ' <span>\u00b7 ' + esc(baseName(_spPath || '/')) + '</span></div>' + btnHtml + '</div>';
     }
 
-    // picks a scan back up after a page change. a finished one is shown once and
-    // then forgotten, so the next visit opens clean
     function spResume() {
         var j = spReadJob();
         if (!j) return;
@@ -2139,17 +2636,17 @@
     function renderSpaceProgress(st) {
         var tot = st.children_total || 0, done = st.children_done || 0;
         var pct = tot > 0 ? Math.min(100, Math.round(done / tot * 100)) : 0;
-        var line = 'Scanning\u2026 ' + done + ' of ' + tot + ' items \u00b7 ' +
-                   fmtBytes(st.bytes || 0) + ' so far \u00b7 ' + (st.files || 0).toLocaleString() + ' files' +
-                   (st.current ? ' \u00b7 current: ' + esc(st.current) : '');
+        var line = T('Scanning') + '\u2026 ' + tf('%s of %s items', done, tot) + ' \u00b7 ' +
+                   tf('%s so far', fmtBytes(st.bytes || 0)) + ' \u00b7 ' + tf('%s files', (st.files || 0).toLocaleString()) +
+                   (st.current ? ' \u00b7 ' + tf('current: %s', esc(st.current)) : '');
         _bodyEl.innerHTML = '<div class="fv-sppanel">' +
-            spHead('<button type="button" class="fv-btn fv-btn--danger" id="fv-sp-cancel"' + (_spCancelling ? ' disabled' : '') + '>' + (_spCancelling ? 'Cancelling\u2026' : 'Cancel') + '</button>') +
+            spHead('<button type="button" class="fv-btn fv-btn--danger" id="fv-sp-cancel"' + (_spCancelling ? ' disabled' : '') + '>' + (_spCancelling ? T('Cancelling') + '\u2026' : T('Cancel')) + '</button>') +
             '<div class="fv-sp-bar"><div class="fv-sp-fill" style="width:' + pct + '%"></div></div>' +
             '<div class="fv-sp-line">' + line + '</div></div>';
         var cb = _bodyEl.querySelector('#fv-sp-cancel');
         if (cb) cb.addEventListener('click', function () {
             _spCancelling = true;
-            cb.disabled = true; cb.textContent = 'Cancelling\u2026';
+            cb.disabled = true; cb.textContent = T('Cancelling') + '\u2026';
             if (_spJobId) postJson('job_cancel', { id: _spJobId });
         });
     }
@@ -2161,13 +2658,13 @@
         kids.forEach(function (c) { if ((c.bytes || 0) > max) max = c.bytes; });
 
         var html = '<div class="fv-sppanel">' +
-            spHead('<button type="button" class="fv-btn" id="fv-sp-rescan">Rescan</button>') +
-            '<div class="fv-sp-note">Click a folder to open and analyse it. Hard linked files are counted once. Sizes are allocated space on disk.</div>' +
-            '<div class="fv-sp-sum"><b>' + fmtBytes(total) + '</b> in ' + (st.files || 0).toLocaleString() + ' files \u00b7 scanned in ' + (st.elapsed != null ? st.elapsed : '?') + 's' +
-            ((st.skipped || 0) > 0 ? ' \u00b7 <span class="fv-sp-warn">' + st.skipped + ' unreadable</span>' : '') + '</div>';
+            spHead('<button type="button" class="fv-btn" id="fv-sp-rescan">' + T('Rescan') + '</button>') +
+            '<div class="fv-sp-note">' + T('Click a folder to open and analyse it. Hard linked files are counted once. Sizes are allocated space on disk.') + '</div>' +
+            '<div class="fv-sp-sum">' + tf('%s in %s files', '<b>' + fmtBytes(total) + '</b>', (st.files || 0).toLocaleString()) + ' \u00b7 ' + tf('scanned in %ss', (st.elapsed != null ? st.elapsed : '?')) +
+            ((st.skipped || 0) > 0 ? ' \u00b7 <span class="fv-sp-warn">' + tf('%s unreadable', st.skipped) + '</span>' : '') + '</div>';
 
         if (!kids.length) {
-            html += '<div class="fv-sp-line">This folder is empty.</div>';
+            html += '<div class="fv-sp-line">' + T('This folder is empty.') + '</div>';
         } else {
             html += '<div class="fv-sp-rows">';
             kids.forEach(function (c) {
@@ -2177,7 +2674,7 @@
                 var pctTxt = pct >= 1 ? Math.round(pct) + '%' : ((c.bytes || 0) > 0 ? '&lt;1%' : '0%');
                 var dim = others || (c.name && c.name.charAt(0) === '.');
                 var glyph = others ? '' : (c.is_dir ? RB_FOLDER_SVG : RB_FILE_SVG);
-                var label = others ? ('Others \u00b7 ' + c.others + ' items') : esc(c.name);
+                var label = others ? (T('Others') + ' \u00b7 ' + tf('%s items', c.others)) : esc(c.name);
                 html += '<div class="fv-sp-row' + (dim ? ' fv-sp-row--dim' : '') + (!others && c.is_dir ? ' fv-sp-row--dir' : '') + '"' +
                         (!others && c.is_dir ? ' data-dir="' + esc(c.name) + '"' : '') + '>' +
                         (w > 0 ? '<i class="fv-sp-rowfill" style="width:' + w + '%"></i>' : '') +
@@ -2199,15 +2696,15 @@
             var name = row.getAttribute('data-dir');
             if (!name) return;
             var p = _spPath.replace(/\/+$/, '') + '/' + name;
-            loadDir(p);                    // navigate the list; this clears the pane
-            startSpaceScan(p, false);      // then analyse the new folder
+            loadDir(p);
+            startSpaceScan(p, false);
         });
     }
 
     function renderSpaceCancelled() {
         _bodyEl.innerHTML = '<div class="fv-sppanel">' +
-            spHead('<button type="button" class="fv-btn" id="fv-sp-rescan">Rescan</button>') +
-            '<div class="fv-sp-line">Scan cancelled.</div></div>';
+            spHead('<button type="button" class="fv-btn" id="fv-sp-rescan">' + T('Rescan') + '</button>') +
+            '<div class="fv-sp-line">' + T('Scan cancelled.') + '</div></div>';
         spBindRescan();
     }
 
@@ -2216,15 +2713,153 @@
             '<div class="fv-sp-line fv-sp-warn">' + esc(msg) + '</div></div>';
     }
 
-    // opening purges the expired events first, so the list never shows rows that
-    // are about to vanish on their own
+    var _searchMode = false;
+    var _srRoot = '';
+    var _srJobId = '';
+    var _srTimer = null;
+    var _srLast = null;
+
+    function resetSearch() {
+        if (_srTimer) { clearInterval(_srTimer); _srTimer = null; }
+        if (_searchMode && _srJobId) postJson('job_cancel', { id: _srJobId });
+        _searchMode = false; _srJobId = '';
+    }
+
+    function enterSearchMode() {
+        var target = singleSelectedFolder() || _currentPath;
+        if (!target) return;
+        leaveEditOk(function () { enterSearchModeNow(target); });
+    }
+
+    function enterSearchModeNow(root) {
+        resetPaneModes();
+        _searchMode = true;
+        _srRoot = root;
+        if (_pvEl) _pvEl.classList.add('fv-preview--active');
+        renderPathCrumbs(null);
+        _selectedFile = null; _previewFile = null;
+        markActive(null);
+        if (_pvToolsEl) _pvToolsEl.innerHTML = '';
+        setFileTools(false, false);
+        var last = (_srLast && _srLast.st) ? _srLast : null;
+        _bodyEl.innerHTML =
+            '<div class="fv-sppanel fv-srpanel">' +
+              '<div class="fv-sp-top"><div class="fv-sp-title">' + T('Search') + ' <span>\u00b7 ' + esc(baseName(_srRoot || '/')) + '</span></div></div>' +
+              '<form class="fv-sr-form" id="fv-sr-form">' +
+                '<input type="text" class="fv-input" id="fv-sr-q" autocomplete="off" spellcheck="false" placeholder="' + T('part of a name, or a pattern like *.mkv') + '" value="' + esc(last ? last.q : '') + '">' +
+                '<button type="submit" class="fv-btn fv-btn--primary" id="fv-sr-go">' + T('Search') + '</button>' +
+              '</form>' +
+              '<div class="fv-sp-note">' + T('Looks through every folder below this one. Case does not matter, and * and ? work as in the shell. Click a result to go to it.') + '</div>' +
+              '<div class="fv-sp-line" id="fv-sr-status"></div>' +
+              '<div class="fv-sp-rows" id="fv-sr-rows"></div>' +
+            '</div>';
+        var form = _bodyEl.querySelector('#fv-sr-form');
+        form.addEventListener('submit', function (e) { e.preventDefault(); startSearch(); });
+        var inp = _bodyEl.querySelector('#fv-sr-q');
+        inp.focus();
+        if (last) { srPaint(last.st, true, last.path !== _srRoot ? tf('Results from %s.', baseName(last.path)) + ' ' : ''); inp.select(); }
+    }
+
+    function startSearch() {
+        var inp = _bodyEl.querySelector('#fv-sr-q');
+        var q = inp ? inp.value.trim() : '';
+        if (!q) { if (inp) inp.focus(); return; }
+        if (_srTimer) { clearInterval(_srTimer); _srTimer = null; }
+        if (_srJobId) { postJson('job_cancel', { id: _srJobId }); _srJobId = ''; }
+        var rows = _bodyEl.querySelector('#fv-sr-rows');
+        if (rows) rows.innerHTML = '';
+        srStatus(T('Starting') + '\u2026', false);
+        var path = _srRoot || _currentPath;
+        postJson('search_start', { path: path, q: q }).then(function (d) {
+            if (!_searchMode) return;
+            if (!d || !d.ok) { srStatus((d && d.error) || T('Could not start.'), false, true); return; }
+            _srJobId = d.id;
+            _srLast = { path: path, q: q, st: null };
+            _srTimer = setInterval(pollSearch, 500);
+            pollSearch();
+        });
+    }
+
+    function pollSearch() {
+        if (!_searchMode || !_srJobId) return;
+        fetchJson('job_status', 'id=' + encodeURIComponent(_srJobId)).then(function (d) {
+            if (!_searchMode || !_srJobId) return;
+            var st = d && d.status;
+            if (!d || !d.ok || !st) { srStop(); srStatus((d && d.error) || T('job lost'), false, true); return; }
+            if (st.state === 'running' || st.state === 'queued') { srPaint(st, false); return; }
+            srStop();
+            if (st.state === 'done') { if (_srLast) _srLast.st = st; srPaint(st, true); }
+            else if (st.state === 'cancelled') srStatus(T('Search cancelled.'), false);
+            else srStatus(st.message || T('search failed'), false, true);
+        }).catch(function () {});
+    }
+
+    function srStop() {
+        if (_srTimer) { clearInterval(_srTimer); _srTimer = null; }
+        _srJobId = '';
+    }
+
+    function srStatus(text, cancel, warn) {
+        var el = _bodyEl.querySelector('#fv-sr-status');
+        if (!el) return;
+        el.className = 'fv-sp-line' + (warn ? ' fv-sp-warn' : '');
+        el.innerHTML = esc(text) + (cancel ? ' <button type="button" class="fv-btn fv-btn--danger fv-sr-cancel" id="fv-sr-cancel">' + T('Cancel') + '</button>' : '');
+        var cb = el.querySelector('#fv-sr-cancel');
+        if (cb) cb.addEventListener('click', function () {
+            cb.disabled = true; cb.textContent = T('Cancelling') + '\u2026';
+            if (_srJobId) postJson('job_cancel', { id: _srJobId });
+        });
+    }
+
+    function srPaint(st, done, prefix) {
+        if (!st) return;
+        var found = st.found || 0, scanned = (st.scanned || 0).toLocaleString();
+        if (done) {
+            var msg = (prefix || '') + (found === 1 ? T('1 match') : tf('%s matches', found.toLocaleString())) + ' \u00b7 ' + tf('%s entries looked at', scanned) +
+                      (st.elapsed != null ? ' \u00b7 ' + tf('%ss', st.elapsed) : '') +
+                      (st.capped ? ' \u00b7 ' + tf('only the first %s are shown, narrow the search', found.toLocaleString()) : '') +
+                      ((st.skipped || 0) > 0 ? ' \u00b7 ' + tf('%s unreadable', st.skipped) : '');
+            srStatus(msg, false, !!st.capped);
+        } else {
+            srStatus(T('Searching') + '\u2026 ' + tf('%s entries', scanned) + ' \u00b7 ' + tf('%s matches', found) +
+                     (st.current ? ' \u00b7 ' + tf('in %s', st.current) : ''), true);
+        }
+        var box = _bodyEl.querySelector('#fv-sr-rows');
+        if (!box) return;
+        var list = st.matches || [];
+        if (Number(box.getAttribute('data-n')) === list.length && !done) return;
+        box.setAttribute('data-n', String(list.length));
+        var root = (st.path || _srRoot || _currentPath || '').replace(/\/+$/, '') + '/';
+        var html = '';
+        for (var i = 0; i < list.length; i++) {
+            var m = list[i];
+            var rel = m.path.indexOf(root) === 0 ? m.path.slice(root.length) : m.path;
+            var dir = rel.lastIndexOf('/') >= 0 ? rel.slice(0, rel.lastIndexOf('/')) : '';
+            html += '<div class="fv-sp-row fv-sp-row--dir fv-sr-row" data-path="' + esc(m.path) + '" data-dir="' + (m.is_dir ? '1' : '0') + '">' +
+                      '<span class="fv-sp-glyph">' + (m.is_dir ? RB_FOLDER_SVG : RB_FILE_SVG) + '</span>' +
+                      '<span class="fv-sp-name">' + esc(m.name) + (dir ? '<i class="fv-sr-in">' + esc(dir) + '</i>' : '') + '</span>' +
+                      '<span class="fv-sp-size">' + (m.is_dir ? '' : formatBytes(m.size)) + '</span>' +
+                      '<span class="fv-sr-date">' + (m.mtime ? fmtDate(m.mtime) : '') + '</span>' +
+                    '</div>';
+        }
+        if (done && !list.length) html = '<div class="fv-sp-line">' + T('Nothing matched.') + '</div>';
+        box.innerHTML = html;
+    }
+
+    function openFound(path, isDir) {
+        if (isDir) { loadDir(path); return; }
+        var parent = path.slice(0, path.lastIndexOf('/')) || '/';
+        loadDir(parent).then(function () {
+            var row = findRow(path);
+            if (row) { openFile(row); if (row.scrollIntoView) row.scrollIntoView({ block: 'nearest' }); }
+        });
+    }
 
     var _recycleMode = false;
     var _rbScope = 'share';
 
     function resetRecycle() { _recycleMode = false; }
 
-    // a share scope needs at least /mnt/<top>/<share>
     function rbShareOk() {
         var parts = (_currentPath || '').split('/').filter(Boolean);
         return parts.length >= 3 && parts[0] === 'mnt';
@@ -2233,11 +2868,11 @@
     function relTime(ts) {
         if (!ts) return '';
         var s = Math.floor(Date.now() / 1000) - ts;
-        if (s < 60) return 'just now';
-        var m = Math.floor(s / 60); if (m < 60) return m + (m === 1 ? ' minute ago' : ' minutes ago');
-        var h = Math.floor(m / 60); if (h < 24) return h + (h === 1 ? ' hour ago' : ' hours ago');
-        var d = Math.floor(h / 24); if (d === 1) return 'yesterday';
-        if (d < 30) return d + ' days ago';
+        if (s < 60) return T('just now');
+        var m = Math.floor(s / 60); if (m < 60) return m === 1 ? tf('%s minute ago', m) : tf('%s minutes ago', m);
+        var h = Math.floor(m / 60); if (h < 24) return h === 1 ? tf('%s hour ago', h) : tf('%s hours ago', h);
+        var d = Math.floor(h / 24); if (d === 1) return T('yesterday');
+        if (d < 30) return tf('%s days ago', d);
         return new Date(ts * 1000).toLocaleDateString();
     }
 
@@ -2259,7 +2894,7 @@
         markActive(null);
         if (_pvToolsEl) _pvToolsEl.innerHTML = '';
         setFileTools(false, false);
-        _bodyEl.innerHTML = '<div class="fv-rbpanel"><div class="fv-rb-loading">Loading the recycle bin\u2026</div></div>';
+        _bodyEl.innerHTML = '<div class="fv-rbpanel"><div class="fv-rb-loading">' + T('Loading the recycle bin') + '\u2026</div></div>';
         postJson('recycle_purge', { mode: 'expired', scope: 'all' }).then(loadRecycle, loadRecycle);
     }
 
@@ -2272,23 +2907,21 @@
             if (!d || !d.ok) { renderRecycleError((d && d.error) || 'failed'); return; }
             renderRecycle(d);
         }).catch(function () {
-            if (_recycleMode) renderRecycleError('network error');
+            if (_recycleMode) renderRecycleError(T('network error'));
         });
     }
 
     function renderRecycleError(msg) {
         _bodyEl.innerHTML =
             '<div class="fv-rbpanel"><div class="fv-rb-empty">' + RB_TRASH_SVG +
-            '<div class="h">Recycle Bin unavailable</div><div class="s">' + esc(msg) + '</div></div></div>';
+            '<div class="h">' + T('Recycle Bin unavailable') + '</div><div class="s">' + esc(msg) + '</div></div></div>';
     }
 
-    // after a restore or a purge the folder listing may have changed too:
-    // refresh it (which clears the pane), then take the pane back and re-list
     function rbAfterChange() {
         loadDir(_currentPath);
         _recycleMode = true;
         if (_pvEl) _pvEl.classList.add('fv-preview--active');
-        _bodyEl.innerHTML = '<div class="fv-rbpanel"><div class="fv-rb-loading">Working\u2026</div></div>';
+        _bodyEl.innerHTML = '<div class="fv-rbpanel"><div class="fv-rb-loading">' + T('Working') + '\u2026</div></div>';
         loadRecycle();
     }
 
@@ -2299,24 +2932,24 @@
         var never = (days === 'never');
 
         var html = '<div class="fv-rbpanel">' +
-            '<div class="fv-rb-top"><div class="fv-rb-title">Recycle Bin</div>' +
+            '<div class="fv-rb-top"><div class="fv-rb-title">' + T('Recycle Bin') + '</div>' +
               '<div class="fv-rb-seg">' +
-                '<button type="button" class="fv-rb-segbtn' + (_rbScope === 'share' ? ' fv-rb-segbtn--on' : '') + '" id="fv-rb-share"' + (canShare ? '' : ' disabled') + '>This share</button>' +
-                '<button type="button" class="fv-rb-segbtn' + (_rbScope === 'all' ? ' fv-rb-segbtn--on' : '') + '" id="fv-rb-all">All shares</button>' +
+                '<button type="button" class="fv-rb-segbtn' + (_rbScope === 'share' ? ' fv-rb-segbtn--on' : '') + '" id="fv-rb-share"' + (canShare ? '' : ' disabled') + '>' + T('This share') + '</button>' +
+                '<button type="button" class="fv-rb-segbtn' + (_rbScope === 'all' ? ' fv-rb-segbtn--on' : '') + '" id="fv-rb-all">' + T('All shares') + '</button>' +
               '</div></div>';
         if (d.enabled === false) {
-            html += '<div class="fv-rb-note">The recycle bin is turned off in Settings. New deletes are permanent; items below can still be restored.</div>';
+            html += '<div class="fv-rb-note">' + T('The recycle bin is turned off in Settings. New deletes are permanent, items below can still be restored.') + '</div>';
         }
         html += '<div class="fv-rb-policy">' + (never
-            ? 'Items are kept until you empty the bin yourself.'
-            : 'Items older than ' + days + ' days are emptied automatically.') + '</div>';
+            ? T('Items are kept until you empty the bin yourself.')
+            : tf('Items older than %s days are emptied automatically.', days)) + '</div>';
 
         if (!evs.length) {
             html += '<div class="fv-rb-empty">' + RB_TRASH_SVG +
-                    '<div class="h">Recycle Bin is empty</div>' +
+                    '<div class="h">' + T('Recycle Bin is empty') + '</div>' +
                     '<div class="s">' + (never
-                        ? 'Deleted items appear here until you empty the bin.'
-                        : 'Deleted items appear here for ' + days + ' days.') + '</div></div>';
+                        ? T('Deleted items appear here until you empty the bin.')
+                        : tf('Deleted items appear here for %s days.', days)) + '</div></div>';
         } else {
             var totalSize = 0, anyPartial = false;
             html += '<div class="fv-rb-list">';
@@ -2325,13 +2958,11 @@
                 if (ev.size_partial) anyPartial = true;
                 var chip = ev.count > 1 ? esc(String(ev.count)) : (ev.kind === 'dir' ? RB_FOLDER_SVG : RB_FILE_SVG);
                 var names = (ev.names || []).map(esc).join(', ');
-                if (ev.count > (ev.names || []).length) names += ' +' + (ev.count - ev.names.length) + ' more';
-                var cnt = ev.count === 1 ? (ev.kind === 'dir' ? '1 folder' : '1 item') : ev.count + ' items';
+                if (ev.count > (ev.names || []).length) names += ' ' + tf('+%s more', ev.count - ev.names.length);
+                var cnt = ev.count === 1 ? (ev.kind === 'dir' ? T('1 folder') : T('1 item')) : tf('%s items', ev.count);
                 var sub = esc(ev.share || '') + ' \u00b7 ' + esc(relTime(ev.deleted_at)) + ' \u00b7 ' + cnt;
                 if (!ev.size_partial && ev.size > 0) sub += ' \u00b7 ' + fmtBytes(ev.size);
-                // a bin that arrived here with a backup keeps the old paths, so Restore
-                // would only fail. say it up front and take the button away
-                if (ev.foreign) sub += ' \u00b7 <span class="fv-rb-foreign">deleted from ' + esc(baseName(ev.foreign)) + ', cannot be restored here</span>';
+                if (ev.foreign) sub += ' \u00b7 <span class="fv-rb-foreign">' + tf('deleted from %s, cannot be restored here', esc(baseName(ev.foreign))) + '</span>';
                 html += '<div class="fv-rb-ev">' +
                           '<div class="fv-rb-chip' + (ev.count > 1 ? ' fv-rb-chip--n' : '') + '">' + chip + '</div>' +
                           '<div class="fv-rb-main">' +
@@ -2339,17 +2970,17 @@
                             '<div class="fv-rb-sub">' + sub + '</div>' +
                           '</div>' +
                           '<div class="fv-rb-act">' +
-                            (ev.foreign ? '' : '<button type="button" class="fv-btn" data-rb="restore" data-i="' + i + '">Restore</button>') +
-                            '<button type="button" class="fv-btn fv-btn--danger" data-rb="purge" data-i="' + i + '">Delete forever</button>' +
+                            (ev.foreign ? '' : '<button type="button" class="fv-btn" data-rb="restore" data-i="' + i + '">' + T('Restore') + '</button>') +
+                            '<button type="button" class="fv-btn fv-btn--danger" data-rb="purge" data-i="' + i + '">' + T('Delete forever') + '</button>' +
                           '</div>' +
                         '</div>';
             });
             html += '</div>';
-            if (d.truncated) html += '<div class="fv-rb-note">Showing the newest 500 events only.</div>';
+            if (d.truncated) html += '<div class="fv-rb-note">' + T('Showing the newest 500 events only.') + '</div>';
             html += '<div class="fv-rb-foot">' +
-                      '<div class="fv-rb-cnt">' + evs.length + (evs.length === 1 ? ' event' : ' events') +
+                      '<div class="fv-rb-cnt">' + (evs.length === 1 ? tf('%s event', 1) : tf('%s events', evs.length)) +
                         (totalSize > 0 ? ' \u00b7 ' + fmtBytes(totalSize) + (anyPartial ? '+' : '') : '') + '</div>' +
-                      '<button type="button" class="fv-btn fv-btn--danger" id="fv-rb-empty">Empty Recycle Bin</button>' +
+                      '<button type="button" class="fv-btn fv-btn--danger" id="fv-rb-empty">' + T('Empty Recycle Bin') + '</button>' +
                     '</div>';
         }
         html += '</div>';
@@ -2371,57 +3002,53 @@
     }
 
     function rbEventLabel(ev) {
-        return ev.count === 1 ? esc((ev.names && ev.names[0]) || '1 item') : ev.count + ' items';
+        return ev.count === 1 ? esc((ev.names && ev.names[0]) || T('1 item')) : tf('%s items', ev.count);
     }
 
     function rbRestore(ev, btn) {
         btn.disabled = true;
-        btn.textContent = 'Restoring\u2026';
+        btn.textContent = T('Restoring') + '\u2026';
         postJson('recycle_restore', { event: ev.event }).then(function (d) {
             rbAfterChange();
             if (!d || !d.ok) {
-                noteModal('Restore', '<p class="fv-confirm">' + esc((d && d.error) || 'Restore failed.') + '</p>');
+                noteModal(T('Restore'), '<p class="fv-confirm">' + esc((d && d.error) || T('Restore failed.')) + '</p>');
             } else if (d.failed && d.failed.length) {
-                noteModal('Restore', '<p class="fv-confirm">Some items were not restored:</p>' +
+                noteModal(T('Restore'), '<p class="fv-confirm">' + T('Some items were not restored:') + '</p>' +
                     '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + d.failed.map(esc).join('<br>') + '</p>');
             }
         });
     }
 
     function rbConfirmPurge(ev) {
-        modalOpen('Delete forever',
-            '<p class="fv-confirm">Permanently delete <b>' + rbEventLabel(ev) + '</b> from the Recycle Bin? This cannot be undone.</p>' +
+        modalOpen(T('Delete forever'),
+            '<p class="fv-confirm">' + tf('Permanently delete %s from the Recycle Bin? This cannot be undone.', '<b>' + rbEventLabel(ev) + '</b>') + '</p>' +
             '<div class="fv-modal__err" style="display:none"></div>',
-            'Delete forever', 'fv-btn--danger', function (ov) {
+            T('Delete forever'), 'fv-btn--danger', function (ov) {
                 modalBusy(ov, true);
                 postJson('recycle_purge', { mode: 'event', event: ev.event }).then(function (d) {
                     modalClose();
                     rbAfterChange();
-                    if (!d || !d.ok) noteModal('Delete forever', '<p class="fv-confirm">' + esc((d && d.error) || 'Purge failed.') + '</p>');
+                    if (!d || !d.ok) noteModal(T('Delete forever'), '<p class="fv-confirm">' + esc((d && d.error) || T('Purge failed.')) + '</p>');
                 });
             });
     }
 
     function rbConfirmEmpty(n) {
-        var where = _rbScope === 'share' ? 'this share' : 'all shares';
-        modalOpen('Empty Recycle Bin',
-            '<p class="fv-confirm">Permanently delete <b>' + n + (n === 1 ? ' event' : ' events') + '</b> from the Recycle Bin of ' + where + '? This cannot be undone.</p>' +
+        var where = _rbScope === 'share' ? T('this share') : T('all shares');
+        modalOpen(T('Empty Recycle Bin'),
+            '<p class="fv-confirm">' + tf('Permanently delete %s from the Recycle Bin of %s? This cannot be undone.', '<b>' + (n === 1 ? tf('%s event', 1) : tf('%s events', n)) + '</b>', where) + '</p>' +
             '<div class="fv-modal__err" style="display:none"></div>',
-            'Empty', 'fv-btn--danger', function (ov) {
+            T('Empty'), 'fv-btn--danger', function (ov) {
                 modalBusy(ov, true);
                 var p = { mode: 'all', scope: _rbScope };
                 if (_rbScope === 'share') p.path = _currentPath || '';
                 postJson('recycle_purge', p).then(function (d) {
                     modalClose();
                     rbAfterChange();
-                    if (!d || !d.ok) noteModal('Empty Recycle Bin', '<p class="fv-confirm">' + esc((d && d.error) || 'Purge failed.') + '</p>');
+                    if (!d || !d.ok) noteModal(T('Empty Recycle Bin'), '<p class="fv-confirm">' + esc((d && d.error) || T('Purge failed.')) + '</p>');
                 });
             });
     }
-
-    // copy or move the ticked items into a folder chosen with a picker, then watch
-    // a background job. a same-fs move is instant; copies and cross-fs moves stream
-    // with a progress bar and can be cancelled.
 
     var UP_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5M5 12l7-7 7 7"/></svg>';
 
@@ -2438,20 +3065,20 @@
     }
 
     function openDestPicker(op, paths) {
-        var label = (op === 'move' ? 'Move' : 'Copy');
+        var label = (op === 'move' ? T('Move') : T('Copy'));
         var cur = '', parent = null;
         var inner =
             '<div class="fv-pick">' +
-              '<div class="fv-pick-bar"><button type="button" class="fv-pick-up" id="fv-pick-up" title="Up one folder">' + UP_SVG + '</button>' +
+              '<div class="fv-pick-bar"><button type="button" class="fv-pick-up" id="fv-pick-up" title="' + T('Up one folder') + '">' + UP_SVG + '</button>' +
                 '<span class="fv-pick-path" id="fv-pick-path"></span></div>' +
               '<div class="fv-pick-list" id="fv-pick-list"></div>' +
-              '<label class="fv-field"><span>If a name exists</span>' +
-                '<select class="fv-input" id="fv-pick-conf"><option value="rename">Keep both</option><option value="overwrite">Overwrite</option><option value="skip">Skip</option></select>' +
+              '<label class="fv-field"><span>' + T('If a name exists') + '</span>' +
+                '<select class="fv-input" id="fv-pick-conf"><option value="rename">' + T('Keep both') + '</option><option value="overwrite">' + T('Overwrite') + '</option><option value="skip">' + T('Skip') + '</option></select>' +
               '</label>' +
             '</div><div class="fv-modal__err" style="display:none"></div>';
 
-        var ov = modalOpen(label + ' ' + paths.length + (paths.length > 1 ? ' items to' : ' item to'), inner,
-            label + ' here', 'fv-btn--primary', function (ov) {
+        var ov = modalOpen((paths.length > 1 ? tf('%s %s items to', label, paths.length) : tf('%s 1 item to', label)), inner,
+            tf('%s here', label), 'fv-btn--primary', function (ov) {
                 if (!cur) return;
                 modalBusy(ov, true);
                 startCopyMove(op, paths, cur, ov.querySelector('#fv-pick-conf').value, false, ov);
@@ -2464,11 +3091,11 @@
             var dirs = (d.entries || []).filter(function (e) { return e.is_dir; });
             ov.querySelector('#fv-pick-list').innerHTML = dirs.length
                 ? dirs.map(function (e) { return '<button type="button" class="fv-pick-row" data-p="' + esc(e.path) + '"><span class="fv-pick-ico">' + FOLDER_SVG + '</span>' + esc(e.name) + '</button>'; }).join('')
-                : '<div class="fv-pick-empty">No subfolders here</div>';
+                : '<div class="fv-pick-empty">' + T('No subfolders here') + '</div>';
         }
         function load(p) {
             fetchJson('list', 'path=' + encodeURIComponent(p || '')).then(function (d) {
-                if (!d || !d.ok) { modalError(ov, (d && d.error) || 'Cannot open folder.'); return; }
+                if (!d || !d.ok) { modalError(ov, (d && d.error) || T('Cannot open folder.')); return; }
                 render(d);
             });
         }
@@ -2486,9 +3113,9 @@
         postJson(op, body).then(function (d) {
             if (d && d.warn && !confirm) { confirmCrossMount(op, paths, dest, conflict, d.message); return; }
             if (!d || !d.ok) {
-                var msg = (d && d.error) || 'Could not start.';
+                var msg = (d && d.error) || T('Could not start.');
                 if (ov) { modalError(ov, msg); modalBusy(ov, false); }
-                else noteModal(op === 'move' ? 'Move' : 'Copy', '<p class="fv-confirm">' + esc(msg) + '</p>');
+                else noteModal(op === 'move' ? T('Move') : T('Copy'), '<p class="fv-confirm">' + esc(msg) + '</p>');
                 return;
             }
             openProgress(op, d.job);
@@ -2496,54 +3123,73 @@
     }
 
     function confirmCrossMount(op, paths, dest, conflict, message) {
-        modalOpen('Are you sure?', '<p class="fv-confirm">' + esc(message || 'This may be risky.') + '</p>',
-            (op === 'move' ? 'Move anyway' : 'Copy anyway'), 'fv-btn--danger',
+        modalOpen(T('Are you sure?'), '<p class="fv-confirm">' + esc(message || T('This may be risky.')) + '</p>',
+            (op === 'move' ? T('Move anyway') : T('Copy anyway')), 'fv-btn--danger',
             function (ov) { modalBusy(ov, true); startCopyMove(op, paths, dest, conflict, true, ov); });
     }
 
     function openProgress(op, jobId) {
-        var verb = (op === 'move' ? 'Moving' : 'Copying');
-        var act  = (op === 'move' ? 'moving' : 'copying');
+        var verb = { move: T('Moving'), copy: T('Copying'), extract: T('Extracting'), compress: T('Compressing') }[op];
+        var act  = { move: T('moving %s'), copy: T('copying %s'), extract: T('extracting %s'), compress: T('packing %s') }[op];
+        var doneMsg = { move: [T('Done. 1 item moved.'), T('Done. %s items moved.')],
+                        copy: [T('Done. 1 item copied.'), T('Done. %s items copied.')],
+                        extract: [T('Done. 1 item extracted.'), T('Done. %s items extracted.')],
+                        compress: [T('Done. 1 file packed.'), T('Done. %s files packed.')] }[op];
+        var cancelMsg = { move: T('Cancelled. Items already moved are in place.'),
+                          copy: T('Cancelled. Items already copied are in place.'),
+                          extract: T('Cancelled. What had come out was removed again.'),
+                          compress: T('Cancelled. The archive was removed again.') }[op];
         var inner =
             '<div class="fv-prog">' +
               '<div class="fv-prog-bar"><div class="fv-prog-fill" id="fv-prog-fill"></div></div>' +
               '<div class="fv-prog-row"><span id="fv-prog-pct">0%</span><span id="fv-prog-bytes"></span></div>' +
               '<div class="fv-prog-row fv-prog-sub"><span id="fv-prog-count"></span><span id="fv-prog-eta"></span></div>' +
-              '<div class="fv-prog-cur" id="fv-prog-cur">starting…</div>' +
+              '<div class="fv-prog-cur" id="fv-prog-cur">' + T('starting') + '…</div>' +
             '</div>';
         var done = false, timer = null, t0 = Date.now();
-        var ov = modalOpen(verb, inner, 'Cancel', 'fv-btn--danger', function (ov) {
+        var ov = modalOpen(verb, inner, T('Cancel'), 'fv-btn--danger', function (ov) {
             if (done) { modalClose(); return; }
             var btn = ov.querySelector('.fv-modal__ok');
-            if (btn) { btn.disabled = true; btn.textContent = 'Cancelling…'; }
+            if (btn) { btn.disabled = true; btn.textContent = T('Cancelling') + '…'; }
             postJson('job_cancel', { id: jobId });
         }, true);
 
         function paint(st) {
             var bt = Number(st.bytes_total) || 0, bd = Number(st.bytes_done) || 0;
+            var known = bt > 0 || st.state === 'done';
             var pct = bt > 0 ? Math.min(100, Math.round(bd / bt * 100)) : (st.state === 'done' ? 100 : 0);
-            ov.querySelector('#fv-prog-fill').style.width = pct + '%';
-            ov.querySelector('#fv-prog-pct').textContent = pct + '%';
-            ov.querySelector('#fv-prog-bytes').textContent = fmtBytes(bd) + ' of ' + fmtBytes(bt);
-            ov.querySelector('#fv-prog-count').textContent = (st.items_done || 0) + ' of ' + (st.items_total || 0) + ' items';
-            ov.querySelector('#fv-prog-cur').textContent = st.current ? (act + ' ' + st.current) : '…';
+            var fill = ov.querySelector('#fv-prog-fill');
+            fill.style.width = known ? pct + '%' : '100%';
+            fill.classList.toggle('fv-prog-fill--busy', !known);
+            ov.querySelector('#fv-prog-pct').textContent = known ? pct + '%' : '';
+            ov.querySelector('#fv-prog-bytes').textContent = known ? tf('%s of %s', fmtBytes(bd), fmtBytes(bt)) : fmtBytes(bd);
+            ov.querySelector('#fv-prog-count').textContent = st.items_total > 0 ? tf('%s of %s items', st.items_done || 0, st.items_total) : tf('%s items', st.items_done || 0);
+            ov.querySelector('#fv-prog-cur').textContent = st.current ? act.replace('%s', st.current) : '…';
             var el = (Date.now() - t0) / 1000, eta = '';
             if (bd > 0 && bt > bd && el > 1) {
                 var rem = Math.round((bt - bd) / (bd / el));
-                eta = rem > 90 ? ('~' + Math.round(rem / 60) + 'm left') : ('~' + rem + 's left');
+                eta = rem > 90 ? tf('~%sm left', Math.round(rem / 60)) : tf('~%ss left', rem);
             }
             ov.querySelector('#fv-prog-eta').textContent = eta;
         }
         function finish(st) {
             done = true; if (timer) { clearInterval(timer); timer = null; }
             var fails = (st && st.failed) || [], msg;
-            if (st && st.state === 'cancelled') msg = 'Cancelled. Items already ' + (op === 'move' ? 'moved' : 'copied') + ' are in place.';
-            else if (st && st.state === 'error') msg = 'Something went wrong. ' + ((st && st.message) || '');
-            else msg = 'Done. ' + (st.items_done || 0) + (((st.items_done || 0) === 1) ? ' item ' : ' items ') + (op === 'move' ? 'moved' : 'copied') + '.';
-            var extra = fails.length ? '<p class="fv-confirm" style="color:var(--fv-warn-text)">Skipped:<br>' + fails.map(esc).join('<br>') + '</p>' : '';
+            if (st && st.state === 'cancelled') msg = cancelMsg;
+            else if (st && st.state === 'error') msg = T('Something went wrong.') + ' ' + ((st && st.message) || '') + (op === 'extract' || op === 'compress' ? ' ' + T('Nothing was left behind.') : '');
+            else {
+                var n = st.items_done || 0;
+                msg = n === 1 ? doneMsg[0] : doneMsg[1].replace('%s', n);
+                var sk = Number(st.skipped) || 0;
+                if (sk) msg += ' ' + (op === 'compress'
+                    ? (sk === 1 ? T('1 link was left out.') : tf('%s links were left out.', sk))
+                    : (sk === 1 ? T('1 link or special entry was left out.') : tf('%s links or special entries were left out.', sk)));
+                if ((op === 'compress' || op === 'extract') && st.name) msg += ' ' + tf('Saved as %s.', st.name);
+            }
+            var extra = fails.length ? '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + T('Skipped:') + '<br>' + fails.map(esc).join('<br>') + '</p>' : '';
             var b = ov.querySelector('.fv-modal__body'); if (b) b.innerHTML = '<p class="fv-confirm">' + esc(msg) + '</p>' + extra;
             var btn = ov.querySelector('.fv-modal__ok');
-            if (btn) { btn.disabled = false; btn.textContent = 'Close'; btn.className = 'fv-btn fv-btn--primary fv-modal__ok'; }
+            if (btn) { btn.disabled = false; btn.textContent = T('Close'); btn.className = 'fv-btn fv-btn--primary fv-modal__ok'; }
             loadDir(_currentPath);
         }
         function poll() {
@@ -2558,12 +3204,6 @@
         poll();
     }
 
-    // both act on the ticked set. the dialog seeds from the first selected item,
-    // then the chosen values are applied to each one in turn.
-
-    // run an action over every path, collect failures, report, then bring the
-    // rows up to date. the selection stays, so you can chain owner then
-    // permission on the same items.
     function applyToEach(action, paths, paramsFor, label) {
         var failed = [];
         (function next(i) {
@@ -2571,7 +3211,7 @@
                 modalClose();
                 refreshRows(paths);
                 if (failed.length) {
-                    noteModal(label, '<p class="fv-confirm">Some items were not changed:</p>' +
+                    noteModal(label, '<p class="fv-confirm">' + T('Some items were not changed:') + '</p>' +
                         '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + failed.map(esc).join('<br>') + '</p>');
                 }
                 return;
@@ -2583,7 +3223,6 @@
         })(0);
     }
 
-    // weights for the 3x3 rwx grid, in mode order
     var PERM_BITS = [256,128,64, 32,16,8, 4,2,1];
 
     function readPermOctal(ov) {
@@ -2594,9 +3233,6 @@
         return s;
     }
 
-    // rwx string for the three classes, matching the list's symbolic format so
-    // the popup preview reads the same way as the row it came from. the special
-    // digit folds into the three x positions the usual way: s, S, t, T
     function permSymbolic(oct, isDir, special) {
         var n  = parseInt(oct, 8) || 0;
         var sp = parseInt(special || '0', 8) || 0;
@@ -2618,14 +3254,14 @@
         var paths = selectedPaths();
         if (!paths.length) return;
         fetchJson('attrs', 'path=' + encodeURIComponent(paths[0])).then(function (a) {
-            if (!a || !a.ok) { noteModal('Permission', '<p class="fv-confirm">' + esc((a && a.error) || 'Cannot read attributes.') + '</p>'); return; }
+            if (!a || !a.ok) { noteModal(T('Permission'), '<p class="fv-confirm">' + esc((a && a.error) || T('Cannot read attributes.')) + '</p>'); return; }
             openPermissionDialog(paths, a);
         });
     }
 
     function openPermissionDialog(paths, a) {
         var mode = parseInt(a.mode, 8) || 0;
-        var rows = ['Owner','Group','Other'];
+        var rows = [T('Owner'), T('Group'), T('Other')];
         var grid = '<table class="fv-perm"><tr><th></th><th>r</th><th>w</th><th>x</th></tr>';
         for (var r = 0; r < 3; r++) {
             grid += '<tr><td>' + rows[r] + '</td>';
@@ -2638,60 +3274,79 @@
         grid += '</table>';
 
         var inner =
-            (paths.length > 1 ? '<p class="fv-confirm" style="margin-bottom:.6rem">Applies to ' + paths.length + ' items.</p>' : '') +
+            (paths.length > 1 ? '<p class="fv-confirm" style="margin-bottom:.6rem">' + tf('Applies to %s items.', paths.length) + '</p>' : '') +
             grid +
-            '<div class="fv-permline">Mode <code id="fv-perm-oct">000</code></div>' +
-            '<label class="fv-check"><input type="checkbox" id="fv-perm-rec"> Apply to all contents (folders)</label>' +
+            '<div class="fv-permline">' + T('Mode') + ' <code id="fv-perm-oct">000</code></div>' +
+            '<label class="fv-check"><input type="checkbox" id="fv-perm-rec"> ' + T('Apply to all contents (folders)') + '</label>' +
+            defaultsRowHtml() +
             '<div class="fv-modal__err" style="display:none"></div>';
 
         var isDir = !!a.is_dir;
-        // suid, sgid and sticky are not edited here, so they must survive an
-        // apply untouched: keep the incoming special digit and send it back
         var special = (typeof a.mode === 'string' && a.mode.length === 4) ? a.mode.charAt(0) : '0';
-        var ov = modalOpen('Permission', inner, 'Apply', 'fv-btn--primary', function (ov) {
+        var ov = modalOpen(T('Permission'), inner, T('Apply'), 'fv-btn--primary', function (ov) {
             var oct = (special !== '0' ? special : '') + readPermOctal(ov);
             var rec = ov.querySelector('#fv-perm-rec').checked ? 1 : '';
             modalBusy(ov, true);
-            applyToEach('chmod', paths, function (p) { return { path: p, mode: oct, recursive: rec }; }, 'Permission');
+            applyToEach('chmod', paths, function (p) { return { path: p, mode: oct, recursive: rec }; }, T('Permission'));
         });
 
         var sync = function () { ov.querySelector('#fv-perm-oct').textContent = permPreview(ov, isDir, special); };
         var bits = ov.querySelectorAll('.fv-permbit');
         for (var i = 0; i < bits.length; i++) bits[i].addEventListener('change', sync);
         sync();
+        bindDefaults(ov, paths);
+    }
+
+    function defaultsRowHtml() {
+        return '<div class="fv-defaults"><span>' + T('nobody:users, folders 777, files 666') + '</span>' +
+               '<button type="button" class="fv-btn" id="fv-defaults">' + T('Unraid defaults') + '</button></div>';
+    }
+    function bindDefaults(ov, paths) {
+        var b = ov.querySelector('#fv-defaults');
+        if (b) b.addEventListener('click', function () { promptNewPerms(paths); });
+    }
+    function promptNewPerms(paths) {
+        var what = paths.length === 1 ? '<b>' + esc(baseName(paths[0])) + '</b>' : '<b>' + tf('%s items', paths.length) + '</b>';
+        var inner =
+            '<p class="fv-confirm">' + tf('Set %s and everything inside to nobody:users, folders 777 and files 666?', what) + '</p>' +
+            '<p class="fv-confirm" style="color:var(--fv-text-dim)">' + T('The same as New Permissions in Tools, for these items only. Links are left as they are.') + '</p>' +
+            '<div class="fv-modal__err" style="display:none"></div>';
+        modalOpen(T('Unraid defaults'), inner, T('Apply'), 'fv-btn--primary', function (ov) {
+            modalBusy(ov, true);
+            applyToEach('newperms', paths, function (p) { return { path: p }; }, T('Unraid defaults'));
+        });
     }
 
     function promptOwner() {
         var paths = selectedPaths();
         if (!paths.length) return;
         fetchJson('attrs', 'path=' + encodeURIComponent(paths[0])).then(function (a) {
-            if (!a || !a.ok) { noteModal('Owner', '<p class="fv-confirm">' + esc((a && a.error) || 'Cannot read attributes.') + '</p>'); return; }
+            if (!a || !a.ok) { noteModal(T('Owner'), '<p class="fv-confirm">' + esc((a && a.error) || T('Cannot read attributes.')) + '</p>'); return; }
             openOwnerDialog(paths, a);
         });
     }
 
     function openOwnerDialog(paths, a) {
         var inner =
-            (paths.length > 1 ? '<p class="fv-confirm" style="margin-bottom:.6rem">Applies to ' + paths.length + ' items.</p>' : '') +
-            '<label class="fv-field"><span>User</span><input type="text" class="fv-input" id="fv-own-user" autocomplete="off" spellcheck="false" value="' + esc(a.owner) + '"></label>' +
-            '<label class="fv-field"><span>Group</span><input type="text" class="fv-input" id="fv-own-group" autocomplete="off" spellcheck="false" value="' + esc(a.group) + '"></label>' +
-            '<p class="fv-hint">Name or numeric id. Leave a field empty to keep it as is.</p>' +
-            '<label class="fv-check"><input type="checkbox" id="fv-own-rec"> Apply to all contents (folders)</label>' +
+            (paths.length > 1 ? '<p class="fv-confirm" style="margin-bottom:.6rem">' + tf('Applies to %s items.', paths.length) + '</p>' : '') +
+            '<label class="fv-field"><span>' + T('User') + '</span><input type="text" class="fv-input" id="fv-own-user" autocomplete="off" spellcheck="false" value="' + esc(a.owner) + '"></label>' +
+            '<label class="fv-field"><span>' + T('Group') + '</span><input type="text" class="fv-input" id="fv-own-group" autocomplete="off" spellcheck="false" value="' + esc(a.group) + '"></label>' +
+            '<p class="fv-hint">' + T('Name or numeric id. Leave a field empty to keep it as is.') + '</p>' +
+            '<label class="fv-check"><input type="checkbox" id="fv-own-rec"> ' + T('Apply to all contents (folders)') + '</label>' +
+            defaultsRowHtml() +
             '<div class="fv-modal__err" style="display:none"></div>';
 
-        var ov = modalOpen('Owner', inner, 'Apply', 'fv-btn--primary', function (ov) {
+        var ov = modalOpen(T('Owner'), inner, T('Apply'), 'fv-btn--primary', function (ov) {
             var user  = ov.querySelector('#fv-own-user').value.trim();
             var group = ov.querySelector('#fv-own-group').value.trim();
-            if (!user && !group) { modalError(ov, 'Set a user or a group.'); return; }
+            if (!user && !group) { modalError(ov, T('Set a user or a group.')); return; }
             var rec = ov.querySelector('#fv-own-rec').checked ? 1 : '';
             modalBusy(ov, true);
-            applyToEach('chown', paths, function (p) { return { path: p, user: user, group: group, recursive: rec }; }, 'Owner');
+            applyToEach('chown', paths, function (p) { return { path: p, user: user, group: group, recursive: rec }; }, T('Owner'));
         });
         ov.querySelector('#fv-own-user').focus();
+        bindDefaults(ov, paths);
     }
-
-    // turn the read-only text preview into a textarea, save atomically with a
-    // stale guard, and restore the preview when done.
 
     function resetEditState() {
         _editing = false;
@@ -2703,44 +3358,207 @@
         var ta = document.getElementById('fv-editor');
         return _editing && !!ta && ta.value !== _editBaseline;
     }
-    // the answer comes from a modal, so callers hand in what they wanted to do next
     function leaveEditOk(onOk, onCancel) {
         if (!_editing)      { onOk(); return; }
         if (!editorDirty()) { resetEditState(); onOk(); return; }
 
         var done = false;
         _modalOnClose = function () { if (!done) { done = true; if (onCancel) onCancel(); } };
-        modalOpen('Unsaved changes',
-            '<p class="fv-confirm">This file has changes that were not saved. Leaving now discards them.</p>',
-            'Discard', 'fv-btn--danger',
+        modalOpen(T('Unsaved changes'),
+            '<p class="fv-confirm">' + T('This file has changes that were not saved. Leaving now discards them.') + '</p>',
+            T('Discard'), 'fv-btn--danger',
             function () { done = true; modalClose(); resetEditState(); onOk(); });
     }
 
-    // load the full file (not the capped preview) and open it in the editor
     function enterEdit() {
         if (!_editMode) return;
         var ctx = _previewFile;
         if (!ctx || (ctx.cat !== 'code' && ctx.cat !== 'md')) return;
         fetchJson('filetext', 'path=' + encodeURIComponent(ctx.path)).then(function (d) {
-            if (!d || !d.ok) { noteModal('Edit', '<p class="fv-confirm">' + esc((d && d.error) || 'This file cannot be edited.') + '</p>'); return; }
+            if (!d || !d.ok) { noteModal(T('Edit'), '<p class="fv-confirm">' + esc((d && d.error) || T('This file cannot be edited.')) + '</p>'); return; }
             openEditor(ctx, d.content, d.mtime);
         });
     }
 
     function openEditor(ctx, content, mtime) {
         _editing = true; _editCtx = ctx; _editMtime = mtime; _editBaseline = content;
-        setPvHead(ctx.name, (ctx.ext ? '.' + ctx.ext : 'Text') + ' \u00b7 editing', 'code');   // clears tools, wrap/raw/edit off
-        var ta = document.createElement('textarea');
-        ta.id = 'fv-editor';
-        ta.className = 'fv-editor';
-        ta.spellcheck = false;
+        setPvHead(ctx.name, (ctx.ext ? '.' + ctx.ext : T('Text')) + ' \u00b7 ' + T('editing'), 'code');
+        _bodyEl.innerHTML =
+            '<div class="fv-ed">' +
+              '<div class="fv-ed__find" id="fv-ed-find" hidden>' +
+                '<input type="text" class="fv-input fv-ed__q" id="fv-ed-q" placeholder="' + T('Find') + '" autocomplete="off" spellcheck="false">' +
+                '<label class="fv-ed__case" title="' + T('Match case') + '"><input type="checkbox" id="fv-ed-case"> Aa</label>' +
+                '<span class="fv-ed__hits" id="fv-ed-hits"></span>' +
+                '<button type="button" class="fv-btn fv-ed__b" id="fv-ed-prev" title="' + T('Previous') + '">\u25b4</button>' +
+                '<button type="button" class="fv-btn fv-ed__b" id="fv-ed-next" title="' + T('Next') + '">\u25be</button>' +
+                '<input type="text" class="fv-input fv-ed__r" id="fv-ed-r" placeholder="' + T('Replace with') + '" autocomplete="off" spellcheck="false">' +
+                '<button type="button" class="fv-btn fv-ed__b" id="fv-ed-rep">' + T('Replace') + '</button>' +
+                '<button type="button" class="fv-btn fv-ed__b" id="fv-ed-repall">' + T('Replace all') + '</button>' +
+                '<button type="button" class="fv-btn fv-ed__b fv-ed__x" id="fv-ed-close" title="' + T('Close') + '">\u00d7</button>' +
+              '</div>' +
+              '<div class="fv-ed__box"><pre class="fv-ed__gutter" id="fv-ed-gutter" aria-hidden="true"></pre>' +
+                '<textarea id="fv-editor" class="fv-editor" spellcheck="false" wrap="off"></textarea></div>' +
+              '<div class="fv-ed__status" id="fv-ed-status"></div>' +
+            '</div>';
+        var ta = document.getElementById('fv-editor');
         ta.value = content;
-        _bodyEl.innerHTML = '';
-        _bodyEl.appendChild(ta);
-        var save = addTool('Save', 'Save changes', function () { saveEdit(false); });
+        var save = addTool(T('Save'), T('Save changes') + ' (Ctrl+S)', function () { saveEdit(false); });
         save.classList.add('fv-pv-btn--primary');
-        addTool('Cancel', 'Discard changes', cancelEdit);
+        addTool(T('Find'), T('Find and replace') + ' (Ctrl+F)', function () { edShowFind(false); });
+        addTool(T('Cancel'), T('Discard changes'), cancelEdit);
+        edBind(ta);
         ta.focus();
+        ta.setSelectionRange(0, 0);
+        ta.scrollTop = 0;
+        if (ta.fvStatus) ta.fvStatus();
+    }
+
+    function edBind(ta) {
+        var gutter = document.getElementById('fv-ed-gutter');
+        var lines = -1;
+        function renumber() {
+            var n = ta.value.split('\n').length;
+            if (n === lines) return;
+            lines = n;
+            var g = '';
+            for (var i = 1; i <= n; i++) g += i + '\n';
+            gutter.textContent = g;
+        }
+        function status() {
+            var pos = ta.selectionStart, before = ta.value.slice(0, pos);
+            var ln = before.split('\n').length, col = pos - before.lastIndexOf('\n');
+            var el = document.getElementById('fv-ed-status');
+            if (el) el.textContent = tf('Ln %s, Col %s', ln, col) + ' \u00b7 ' + (lines === 1 ? T('1 line') : tf('%s lines', lines)) +
+                                     (ta.selectionEnd > pos ? ' \u00b7 ' + tf('%s selected', ta.selectionEnd - pos) : '') +
+                                     (editorDirty() ? ' \u00b7 ' + T('modified') : '');
+        }
+        ta.addEventListener('scroll', function () { gutter.scrollTop = ta.scrollTop; });
+        ta.addEventListener('input', function () { renumber(); status(); edRecount(); });
+        ta.addEventListener('keyup', status);
+        ta.addEventListener('click', status);
+        ta.addEventListener('select', status);
+        ta.addEventListener('keydown', function (e) {
+            var mod = e.ctrlKey || e.metaKey;
+            if (mod && !e.altKey && (e.key === 'f' || e.key === 'F')) { e.preventDefault(); edShowFind(false); }
+            else if (mod && !e.altKey && (e.key === 'h' || e.key === 'H')) { e.preventDefault(); edShowFind(true); }
+            else if (mod && !e.altKey && (e.key === 's' || e.key === 'S')) { e.preventDefault(); saveEdit(false); }
+            else if (e.key === 'F3') { e.preventDefault(); edFind(e.shiftKey ? -1 : 1); }
+            else if (e.key === 'Tab' && !e.shiftKey && !mod) {
+                e.preventDefault();
+                ta.setRangeText('\t', ta.selectionStart, ta.selectionEnd, 'end');
+                ta.dispatchEvent(new Event('input'));
+            }
+        });
+        var bar = document.getElementById('fv-ed-find');
+        var q = document.getElementById('fv-ed-q');
+        q.addEventListener('input', function () { edFind(0); });
+        document.getElementById('fv-ed-case').addEventListener('change', function () { edFind(0); });
+        bar.addEventListener('keydown', function (e) {
+            if (e.key === 'Enter') { e.preventDefault(); if (e.target.id === 'fv-ed-r') edReplace(); else edFind(e.shiftKey ? -1 : 1); }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); edHideFind(); }
+            else if (e.key === 'F3') { e.preventDefault(); edFind(e.shiftKey ? -1 : 1); }
+        });
+        document.getElementById('fv-ed-prev').addEventListener('click', function () { edFind(-1); });
+        document.getElementById('fv-ed-next').addEventListener('click', function () { edFind(1); });
+        document.getElementById('fv-ed-rep').addEventListener('click', edReplace);
+        document.getElementById('fv-ed-repall').addEventListener('click', edReplaceAll);
+        document.getElementById('fv-ed-close').addEventListener('click', edHideFind);
+        renumber();
+        status();
+        ta.fvStatus = status;
+    }
+
+    function edTa() { return document.getElementById('fv-editor'); }
+    function edShowFind(replace) {
+        var ta = edTa(), bar = document.getElementById('fv-ed-find');
+        if (!ta || !bar) return;
+        bar.hidden = false;
+        var q = document.getElementById('fv-ed-q');
+        var sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+        if (sel && sel.indexOf('\n') === -1) q.value = sel;
+        var target = replace ? document.getElementById('fv-ed-r') : q;
+        target.focus(); target.select();
+        edRecount();
+    }
+    function edHideFind() {
+        var bar = document.getElementById('fv-ed-find'), ta = edTa();
+        if (bar) bar.hidden = true;
+        if (ta) ta.focus();
+    }
+    function edMatches() {
+        var ta = edTa(), q = document.getElementById('fv-ed-q');
+        if (!ta || !q || !q.value) return [];
+        var cs = document.getElementById('fv-ed-case').checked;
+        var hay = cs ? ta.value : ta.value.toLowerCase(), needle = cs ? q.value : q.value.toLowerCase();
+        var out = [], i = 0;
+        while (out.length < 20000) {
+            i = hay.indexOf(needle, i);
+            if (i < 0) break;
+            out.push(i); i += needle.length || 1;
+        }
+        return out;
+    }
+    function edRecount() {
+        var hits = document.getElementById('fv-ed-hits'), bar = document.getElementById('fv-ed-find');
+        if (!hits || !bar || bar.hidden) return;
+        var m = edMatches(), ta = edTa(), q = document.getElementById('fv-ed-q');
+        if (!q.value) { hits.textContent = ''; return; }
+        var cur = -1;
+        for (var i = 0; i < m.length; i++) if (m[i] === ta.selectionStart && ta.selectionEnd === m[i] + q.value.length) { cur = i; break; }
+        hits.textContent = m.length ? ((cur >= 0 ? (cur + 1) + ' / ' : '') + (m.length >= 20000 ? '20000+' : m.length)) : T('no matches');
+        hits.classList.toggle('fv-sp-warn', !m.length);
+    }
+    function edFind(dir) {
+        var ta = edTa(), q = document.getElementById('fv-ed-q');
+        if (!ta || !q) return false;
+        var m = edMatches();
+        if (!m.length) { edRecount(); return false; }
+        var len = q.value.length, pick = -1;
+        if (dir > 0) {
+            for (var i = 0; i < m.length; i++) if (m[i] >= ta.selectionEnd || (m[i] === ta.selectionStart && ta.selectionEnd - ta.selectionStart !== len)) { pick = i; break; }
+            if (pick < 0) pick = 0;
+        } else if (dir < 0) {
+            for (var j = m.length - 1; j >= 0; j--) if (m[j] < ta.selectionStart) { pick = j; break; }
+            if (pick < 0) pick = m.length - 1;
+        } else {
+            for (var k = 0; k < m.length; k++) if (m[k] >= ta.selectionStart) { pick = k; break; }
+            if (pick < 0) pick = 0;
+        }
+        var pos = m[pick];
+        ta.setSelectionRange(pos, pos + len);
+        var line = ta.value.slice(0, pos).split('\n').length - 1;
+        var lh = parseFloat(getComputedStyle(ta).lineHeight) || 20;
+        var top = line * lh;
+        if (top < ta.scrollTop || top > ta.scrollTop + ta.clientHeight - lh * 2) ta.scrollTop = Math.max(0, top - ta.clientHeight / 2);
+        edRecount();
+        if (ta.fvStatus) ta.fvStatus();
+        return true;
+    }
+    function edReplace() {
+        var ta = edTa(), q = document.getElementById('fv-ed-q'), r = document.getElementById('fv-ed-r');
+        if (!ta || !q || !q.value) return;
+        var cs = document.getElementById('fv-ed-case').checked;
+        var sel = ta.value.slice(ta.selectionStart, ta.selectionEnd);
+        var same = cs ? sel === q.value : sel.toLowerCase() === q.value.toLowerCase();
+        if (same) {
+            ta.setRangeText(r.value, ta.selectionStart, ta.selectionEnd, 'end');
+            ta.dispatchEvent(new Event('input'));
+        }
+        edFind(1);
+    }
+    function edReplaceAll() {
+        var ta = edTa(), q = document.getElementById('fv-ed-q'), r = document.getElementById('fv-ed-r');
+        if (!ta || !q || !q.value) return;
+        var m = edMatches();
+        if (!m.length) { edRecount(); return; }
+        var pos = ta.selectionStart;
+        var v = ta.value, out = '', last = 0;
+        for (var i = 0; i < m.length; i++) { out += v.slice(last, m[i]) + r.value; last = m[i] + q.value.length; }
+        ta.value = out + v.slice(last);
+        ta.setSelectionRange(Math.min(pos, ta.value.length), Math.min(pos, ta.value.length));
+        ta.dispatchEvent(new Event('input'));
+        var hits = document.getElementById('fv-ed-hits');
+        if (hits) { hits.textContent = tf('%s replaced', m.length); hits.classList.remove('fv-sp-warn'); }
     }
 
     function setEditorBusy(on) {
@@ -2751,7 +3569,7 @@
         var b = _pvToolsEl ? _pvToolsEl.querySelector('.fv-pv-btn--primary') : null;
         if (!b) return;
         var t = b.textContent;
-        b.textContent = 'Saved'; b.classList.add('active');
+        b.textContent = T('Saved'); b.classList.add('active');
         setTimeout(function () { if (b) { b.textContent = t; b.classList.remove('active'); } }, 1200);
     }
 
@@ -2762,28 +3580,26 @@
         setEditorBusy(true);
         postJson('save', { path: _editCtx.path, content: content, mtime: _editMtime, force: force ? 1 : '' }).then(function (d) {
             setEditorBusy(false);
-            if (d && d.ok) { _editBaseline = content; _editMtime = d.mtime; flashSaved(); return; }
+            if (d && d.ok) { _editBaseline = content; _editMtime = d.mtime; flashSaved(); if (ta.fvStatus) ta.fvStatus(); return; }
             if (d && d.stale) { confirmStale(); return; }
-            noteModal('Save', '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + esc((d && d.error) || 'Could not save.') + '</p>');
+            noteModal(T('Save'), '<p class="fv-confirm" style="color:var(--fv-warn-text)">' + esc((d && d.error) || T('Could not save.')) + '</p>');
         });
     }
 
-    // the file moved under us: overwrite with the editor copy, or keep editing
     function confirmStale() {
-        modalOpen('File changed on disk',
-            '<p class="fv-confirm">This file was changed outside the editor since you opened it. Overwrite it with your version?</p>',
-            'Overwrite', 'fv-btn--danger', function () { modalClose(); saveEdit(true); });
+        modalOpen(T('File changed on disk'),
+            '<p class="fv-confirm">' + T('This file was changed outside the editor since you opened it. Overwrite it with your version?') + '</p>',
+            T('Overwrite'), 'fv-btn--danger', function () { modalClose(); saveEdit(true); });
     }
 
     function cancelEdit() {
         if (editorDirty()) {
-            modalOpen('Discard changes', '<p class="fv-confirm">Discard your unsaved changes?</p>',
-                'Discard', 'fv-btn--danger', function () { modalClose(); exitToPreview(); });
+            modalOpen(T('Discard changes'), '<p class="fv-confirm">' + T('Discard your unsaved changes?') + '</p>',
+                T('Discard'), 'fv-btn--danger', function () { modalClose(); exitToPreview(); });
             return;
         }
         exitToPreview();
     }
-    // back to the read-only preview of the same file
     function exitToPreview() {
         var ctx = _editCtx;
         resetEditState();
@@ -2812,6 +3628,11 @@
         _wrapBtn   = document.getElementById('fv-op-wrap');
         _rawBtn    = document.getElementById('fv-op-openraw');
         _createBtn = document.getElementById('fv-op-create');
+        _compressBtn = document.getElementById('fv-op-compress');
+        _pathBtn   = document.getElementById('fv-op-path');
+        _locateBtn = document.getElementById('fv-op-locate');
+        _searchBtn = document.getElementById('fv-op-search');
+        _hashBtn   = document.getElementById('fv-op-hash');
         _renameBtn = document.getElementById('fv-op-rename');
         _deleteBtn = document.getElementById('fv-op-delete');
         _editBtn   = document.getElementById('fv-op-edit');
@@ -2826,11 +3647,16 @@
         if (!_listEl) return;
 
         _listEl.addEventListener('click', onListClick);
+        _listEl.addEventListener('mousedown', onPickDown);
+        if (_bodyEl) _bodyEl.addEventListener('mousedown', onPickDown);
         _crumbEl.addEventListener('click', onCrumbClick);
         if (_pvCloseEl) _pvCloseEl.addEventListener('click', function () { leaveEditOk(clearPreview); });
-        // clicking a row here does what clicking it in the list does
         if (_bodyEl) _bodyEl.addEventListener('click', function (e) {
-            if (e.target && e.target.type === 'checkbox') return;   // the tick is not a click on the row
+            if (e.target && e.target.type === 'checkbox') { onPickClick(e); return; }
+            var sr = e.target.closest ? e.target.closest('.fv-sr-row') : null;
+            if (sr) { openFound(sr.getAttribute('data-path'), sr.getAttribute('data-dir') === '1'); return; }
+            var th = e.target.closest ? e.target.closest('th[data-key]') : null;
+            if (th) { setSort(th.getAttribute('data-key')); return; }
             var tr = e.target.closest ? e.target.closest('.fv-fo__row') : null;
             if (!tr) return;
             if (e.target.classList && e.target.classList.contains('fv-fo__meas')) {
@@ -2847,19 +3673,12 @@
         if (_sideBtn) _sideBtn.addEventListener('click', function (e) { e.preventDefault(); setSplit(!_split); });
         if (_filterWideEl) _filterWideEl.addEventListener('input', applyFilter);
 
-        // the tick column writes into the same selection the list uses, so every
-        // file action keeps working without knowing which pane asked
         if (_bodyEl) _bodyEl.addEventListener('change', function (e) {
             var t = e.target;
             if (!t) return;
             if (t.id === 'fv-fo-all') {
-                var cbs = _bodyEl.querySelectorAll('.fv-focb');
+                if (t.checked) { selectAllVisible(); return; }
                 _selected = {};
-                for (var i = 0; i < cbs.length; i++) {
-                    cbs[i].checked = t.checked;
-                    var r = cbs[i].closest('.fv-fo__row');
-                    if (t.checked && r) _selected[r.getAttribute('data-path')] = true;
-                }
                 syncListChecks();
                 updateSelUi();
                 return;
@@ -2869,7 +3688,6 @@
                 if (!row) return;
                 var p = row.getAttribute('data-path');
                 if (t.checked) _selected[p] = true; else delete _selected[p];
-                row.classList.toggle('selected', t.checked);
                 syncListChecks();
                 updateSelUi();
             }
@@ -2881,7 +3699,6 @@
             var b = e.target.closest ? e.target.closest('.fv-fav-item') : null;
             if (b) favGo(b.getAttribute('data-path'));
         });
-        // any click outside closes it, the same way a menu is expected to behave
         document.addEventListener('click', function (e) {
             if (!_favOpen) return;
             if (_favMenuEl && _favMenuEl.contains(e.target)) return;
@@ -2902,15 +3719,25 @@
         if (_uploadBtn) _uploadBtn.addEventListener('click', enterUploadMode);
         if (_recycleBtn) _recycleBtn.addEventListener('click', enterRecycleMode);
         if (_spaceBtn) _spaceBtn.addEventListener('click', enterSpaceMode);
+        if (_compressBtn) _compressBtn.addEventListener('click', promptCompress);
+        if (_pathBtn) _pathBtn.addEventListener('click', copyPath);
+        if (_locateBtn) _locateBtn.addEventListener('click', promptLocate);
+        if (_searchBtn) _searchBtn.addEventListener('click', enterSearchMode);
+        if (_hashBtn) _hashBtn.addEventListener('click', promptChecksum);
         _listEl.addEventListener('change', onListChange);
-        updateOps();   // nothing ticked yet
+        updateOps();
 
         if (_filterEl) _filterEl.addEventListener('input', applyFilter);
         var modeBtn = document.getElementById('fv-mode');
         if (modeBtn) modeBtn.addEventListener('click', function (e) { e.preventDefault(); setMode(!_editMode); });
         document.addEventListener('keydown', onKey);
+        window.addEventListener('beforeunload', function (e) {
+            if (!editorDirty() && !_upActive) return;
+            e.preventDefault();
+            e.returnValue = '';
+        });
 
-        setMode(false);   // start in preview-only
+        setMode(!!_cfg.editDefault);
         setSplit(sideOn());
         favLoad();
         loadDir(readDir(), true).then(spResume);

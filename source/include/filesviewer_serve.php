@@ -5,15 +5,77 @@
    License: GPLv3
    ========================================================================= */
 
-// streams raw file bytes for the in-page preview and for raw or download links.
-// all the safety lives in the shared class: path containment, the fixed mime map,
-// and the token gate.
 require_once __DIR__ . '/filesviewer_api.php';
 
-// this url ends up in <video src> and in download links, so it is gated by our own
-// short lived token rather than the one that unlocks the rest of the webgui
 if (!FilesViewerEndpoint::validateNonce()) {
     http_response_code(403);
+    exit;
+}
+
+function fv_disposition(string $kind, string $name): string
+{
+    $name  = str_replace(['"', '\\', "\r", "\n"], '', $name);
+    $ascii = @preg_replace('/[^\x20-\x7e]/u', '_', $name);
+    if ($ascii === null) $ascii = preg_replace('/[^\x20-\x7e]/', '_', $name);
+    return $kind . '; filename="' . $ascii . '"; filename*=UTF-8\'\'' . rawurlencode($name);
+}
+
+function fv_stream_setup(): void
+{
+    @ini_set('zlib.output_compression', 'Off');
+    @set_time_limit(0);
+    while (ob_get_level() > 0) ob_end_clean();
+    @ignore_user_abort(true);
+}
+
+if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'POST' && isset($_POST['zip'])) {
+    if (!FilesViewerEndpoint::validateCsrf()) {
+        http_response_code(403);
+        exit;
+    }
+    $src = FilesViewerEndpoint::zipSources((string)($_POST['paths'] ?? ''));
+    if (!$src['ok']) {
+        http_response_code(404);
+        exit;
+    }
+    require_once __DIR__ . '/filesviewer_zip.php';
+
+    header('X-Content-Type-Options: nosniff');
+    header('Content-Type: application/zip');
+    header('Content-Disposition: ' . fv_disposition('attachment', FilesViewerEndpoint::zipName((string)($_POST['name'] ?? ''), $src['items'])));
+    header('Cache-Control: private, no-store');
+    header('X-Accel-Buffering: no');
+    fv_stream_setup();
+
+    $zip = new FilesViewerZip(static function (string $buf): bool {
+        echo $buf;
+        flush();
+        return !connection_aborted();
+    }, 1);
+
+    $walk = function (string $path, string $rel) use (&$walk, $zip): bool {
+        if (is_link($path)) return true;
+        $st = @stat($path);
+        if ($st === false) return true;
+        if (is_dir($path)) {
+            if (!$zip->dir($rel . '/', (int)$st['mtime'], (int)$st['mode'])) return false;
+            foreach ((array)@scandir($path) as $e) {
+                if ($e === '.' || $e === '..') continue;
+                if (!$walk($path . '/' . $e, $rel . '/' . $e)) return false;
+            }
+            return true;
+        }
+        $in = @fopen($path, 'rb');
+        if ($in === false) return true;
+        $ok = $zip->file($rel, $in, (int)$st['size'], (int)$st['mtime'], (int)$st['mode']);
+        fclose($in);
+        return $ok;
+    };
+
+    foreach ($src['items'] as $it) {
+        if (!$walk($it['path'], $it['name'])) exit;
+    }
+    $zip->finish();
     exit;
 }
 
@@ -24,7 +86,7 @@ if ($real === null) {
 }
 
 $ext  = FilesViewerEndpoint::effectiveExt(basename($real));
-$mime = FilesViewerEndpoint::mimeFor($ext);                 // never trust the file content for this
+$mime = FilesViewerEndpoint::mimeFor($ext);
 $dl   = isset($_GET['dl']) && (string)$_GET['dl'] === '1';
 
 $size = (int)@filesize($real);
@@ -34,43 +96,28 @@ if ($fh === false) {
     exit;
 }
 
-header('X-Content-Type-Options: nosniff');                  // the browser must honour the type we send
+header('X-Content-Type-Options: nosniff');
 header('Content-Type: ' . $mime);
 header('Accept-Ranges: bytes');
 header('Cache-Control: private, max-age=0, must-revalidate');
 
-// no known type means download, so the browser never renders an unknown blob.
-// svg downloads too: inside the preview <img> it cannot run, opened as a
-// document it would script our origin
 $svg = ($mime === 'image/svg+xml');
 $disposition = ($dl || $svg || $mime === 'application/octet-stream') ? 'attachment' : 'inline';
-$fname = str_replace(['"', "\r", "\n"], '', basename($real));
-header('Content-Disposition: ' . $disposition . '; filename="' . $fname . '"');
+header('Content-Disposition: ' . fv_disposition($disposition, basename($real)));
 
-// turn off buffering and compression so ranges are exact and large files stream
-@ini_set('zlib.output_compression', 'Off');
-@set_time_limit(0);                                         // a long media stream must not be cut off
-while (ob_get_level() > 0) ob_end_clean();
+fv_stream_setup();
 
-// a player that seeks or a preview that closes drops the connection mid stream.
-// without this php is killed on the next write and nginx logs the half finished
-// response as an error, so the loop below is left to notice and stop on its own
-@ignore_user_abort(true);
-
-// head requests want the headers only
 if (($_SERVER['REQUEST_METHOD'] ?? 'GET') === 'HEAD') {
     header('Content-Length: ' . $size);
     fclose($fh);
     exit;
 }
 
-// byte ranges, so the browser can seek media and never has to pull a whole file
 $start = 0;
 $end   = $size - 1;
 $range = (string)($_SERVER['HTTP_RANGE'] ?? '');
 if ($range !== '' && preg_match('/bytes=(\d*)-(\d*)/', $range, $m)) {
     if ($m[1] === '' && $m[2] !== '') {
-        // suffix form "bytes=-N": the last N bytes of the file
         $n     = (int)$m[2];
         $start = ($n >= $size) ? 0 : $size - $n;
         $end   = $size - 1;
@@ -95,7 +142,7 @@ header('Content-Length: ' . $length);
 
 if ($start > 0) fseek($fh, $start);
 
-$chunk     = 1 << 19;   // 512 KB per read, so memory stays flat on big files
+$chunk     = 1 << 19;
 $remaining = $length;
 while ($remaining > 0 && !feof($fh)) {
     $buf = fread($fh, ($remaining > $chunk) ? $chunk : $remaining);
@@ -103,6 +150,6 @@ while ($remaining > 0 && !feof($fh)) {
     echo $buf;
     $remaining -= strlen($buf);
     flush();
-    if (connection_aborted()) break;   // nobody is listening, stop reading the disk
+    if (connection_aborted()) break;
 }
 fclose($fh);

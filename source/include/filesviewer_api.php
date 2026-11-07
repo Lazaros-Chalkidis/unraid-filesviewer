@@ -13,13 +13,10 @@ final class FilesViewerEndpoint
     private const CFG_FILE    = '/boot/config/plugins/filesviewer/filesviewer.cfg';
     private const VAR_INI     = '/var/local/emhttp/var.ini';
 
-    // hard ceiling so a directory with tens of thousands of entries cannot stall
-    // the request or freeze the browser. anything past this is reported truncated.
     private const LIST_MAX = 5000;
 
     private static array $iniCache = [];
 
-    // one parse per file per request, the same ini gets read from several call paths
     private static function cachedIniRead(string $path, bool $sections = false): array
     {
         $key = $path . ($sections ? '|s' : '|f');
@@ -29,7 +26,6 @@ final class FilesViewerEndpoint
         return self::$iniCache[$key] = (is_array($data) ? $data : []);
     }
 
-    // gate for every request. token comes from unraid's var.ini
     public static function validateCsrf(): bool
     {
         $expected = '';
@@ -40,27 +36,19 @@ final class FilesViewerEndpoint
             $expected = (string)$GLOBALS['var']['csrf_token'];
         }
 
-        // no token server-side means emhttpd has not written one yet. the endpoint
-        // runs as root, so an unverifiable request is refused rather than trusted
         if ($expected === '') return false;
 
-        // dynamix checks POST itself and then unsets both the field and the header,
-        // so nothing is left here to compare and its absence means it never ran
         if (($_SERVER['REQUEST_METHOD'] ?? '') === 'POST') {
             return function_exists('csrf_terminate');
         }
 
-        // GET is ours. the query string is not read, it ends up in the logs
         $sent = isset($_SERVER['HTTP_X_CSRF_TOKEN']) ? (string)$_SERVER['HTTP_X_CSRF_TOKEN'] : '';
         if ($sent === '') return false;
-        return hash_equals($expected, $sent);  // constant time, no early-exit leak
+        return hash_equals($expected, $sent);
     }
 
-    // a media src url cannot carry a header, so something has to ride in the query.
-    // ours goes there instead of unraid's, which the logs would then leak.
-
     private const TOK_DIR = '/tmp/filesviewer/tokens';
-    private const TOK_TTL = 43200;   // 12h, longer than any sitting on the page
+    private const TOK_TTL = 43200;
 
     public static function generateNonce(): string
     {
@@ -79,7 +67,7 @@ final class FilesViewerEndpoint
         $tok = (string)($_GET['_fvt'] ?? $_POST['_fvt'] ?? '');
         if ($tok === '' || !preg_match('/^[a-f0-9]{32}$/', $tok)) return false;
 
-        $f = self::TOK_DIR . '/' . $tok;   // the name is the whole token, no path parts survive the pattern
+        $f = self::TOK_DIR . '/' . $tok;
         $m = @filemtime($f);
         if ($m === false) return false;
         if ($m < time() - self::TOK_TTL) { @unlink($f); return false; }
@@ -95,7 +83,6 @@ final class FilesViewerEndpoint
         }
     }
 
-    // user-facing config, defaults applied
     public static function config(): array
     {
         $cfg = self::cachedIniRead(self::CFG_FILE);
@@ -115,6 +102,8 @@ final class FilesViewerEndpoint
             'text_cap_kb'   => max(64, min(20480, (int)($cfg['FV_TEXT_CAP_KB'] ?? 2048))),
             'md_render'     => (($cfg['FV_MD_RENDER'] ?? '1') === '1'),
             'btn_colors'    => (($cfg['FV_BTN_COLORS'] ?? '1') === '1'),
+            'edit_default'  => (($cfg['FV_EDIT_DEFAULT'] ?? '0') === '1'),
+            'notify'        => (($cfg['FV_NOTIFY'] ?? '1') === '1'),
             'space'         => (($cfg['FV_SPACE'] ?? '0') === '1'),
             'img_max_mb'    => max(1, min(500, (int)($cfg['FV_IMG_MAX_MB'] ?? 50))),
             'archive_max'   => max(50, min(20000, (int)($cfg['FV_ARCHIVE_MAX'] ?? 1000))),
@@ -126,27 +115,21 @@ final class FilesViewerEndpoint
         ];
     }
 
-    // the viewer is rooted at /mnt. every path the endpoint touches must resolve
-    // under here, so browsing can never escape above the array and pool mounts
     public static function allowedRoots(): array
     {
         $real = realpath('/mnt');
         return ($real !== false && is_dir($real)) ? [$real] : [];
     }
 
-    // the single most important check in the plugin. resolve the request to a real
-    // path, then confirm it sits under an allowed root. this defeats ../ traversal
-    // and symlinks that point outside the roots, since realpath collapses both.
     public static function safePath(string $req, string $mustBe = ''): ?string
     {
-        if ($req === '' || strpos($req, "\0") !== false) return null;  // reject null-byte tricks
+        if ($req === '' || strpos($req, "\0") !== false) return null;
 
         $real = realpath($req);
         if ($real === false) return null;
 
         $inside = false;
         foreach (self::allowedRoots() as $root) {
-            // trailing separator on the prefix so /mnt/user cannot match /mnt/userdata
             if ($real === $root || strpos($real, $root . DIRECTORY_SEPARATOR) === 0) {
                 $inside = true;
                 break;
@@ -160,13 +143,11 @@ final class FilesViewerEndpoint
         return $real;
     }
 
-    // the bin is managed through its own endpoints only, the browser never sees it
     public static function inBin(string $real): bool
     {
         return basename($real) === self::BIN_DIR || strpos($real . '/', '/' . self::BIN_DIR . '/') !== false;
     }
 
-    // which root contains a resolved path, used to clamp the breadcrumb to the root
     private static function rootOf(string $real): ?string
     {
         foreach (self::allowedRoots() as $root) {
@@ -175,7 +156,6 @@ final class FilesViewerEndpoint
         return null;
     }
 
-    // extension to preview category. drives the list icon now, the preview type later.
     public static function category(string $ext): string
     {
         static $map = [
@@ -207,11 +187,6 @@ final class FilesViewerEndpoint
         return 'bin';
     }
 
-    // a real type can hide behind a trailing suffix like a backup copy. scan the
-    // dot segments after the basename from the end and return the first that maps
-    // to a previewable type, so objects.json.071.bak still reads as json. the
-    // basename is never an extension candidate, so json.backup.dat stays binary.
-    // a run with nothing previewable keeps its last segment just for display.
     public static function effectiveExt(string $name): string
     {
         $parts = explode('.', $name);
@@ -224,9 +199,6 @@ final class FilesViewerEndpoint
         return strtolower($cands[count($cands) - 1]);
     }
 
-    // fixed extension to mime map. the streaming endpoint sets
-    // Content-Type from this and never from the file content, so a file cannot
-    // dictate its own type. unknown extensions fall back to octet-stream.
     public static function mimeFor(string $ext): string
     {
         static $map = [
@@ -245,19 +217,15 @@ final class FilesViewerEndpoint
         ];
         $ext = strtolower($ext);
         if (isset($map[$ext])) return $map[$ext];
-        // text and code types view inline as plain text, so the browser shows
-        // them in a tab instead of downloading, and never renders or runs them
         if (in_array(self::category($ext), ['code', 'md'], true)) return 'text/plain';
         return 'application/octet-stream';
     }
-
 
     public static function listDir(string $req): array
     {
         $cfg   = self::config();
         $roots = $cfg['roots'];
 
-        // empty path: one root opens straight into it, several show a picker
         if ($req === '') {
             if (count($roots) === 1) {
                 $req = $roots[0];
@@ -320,7 +288,6 @@ final class FilesViewerEndpoint
         ];
     }
 
-    // when more than one root is configured, the top level lists the roots
     private static function rootPickerPayload(array $roots): array
     {
         $entries = [];
@@ -355,7 +322,6 @@ final class FilesViewerEndpoint
         ];
     }
 
-    // segments from the root down to the current directory, each a navigable path
     private static function breadcrumb(string $real, string $root): array
     {
         $crumbs = [['name' => basename($root) ?: $root, 'path' => $root]];
@@ -376,7 +342,6 @@ final class FilesViewerEndpoint
     {
         $mul = ($dir === 'desc') ? -1 : 1;
         usort($entries, static function ($a, $b) use ($sort, $mul, $foldersFirst) {
-            // folders stay above files regardless of the chosen direction
             if ($foldersFirst && $a['is_dir'] !== $b['is_dir']) return $a['is_dir'] ? -1 : 1;
 
             switch ($sort) {
@@ -384,11 +349,10 @@ final class FilesViewerEndpoint
                 case 'modified': $c = $a['mtime'] <=> $b['mtime']; break;
                 default:         $c = strcasecmp($a['name'], $b['name']); break;
             }
-            if ($c === 0) $c = strcasecmp($a['name'], $b['name']);  // stable tie-break by name
+            if ($c === 0) $c = strcasecmp($a['name'], $b['name']);
             return $c * $mul;
         });
     }
-
 
     public static function meta(string $req): array
     {
@@ -412,7 +376,6 @@ final class FilesViewerEndpoint
         ];
     }
 
-    // rwx string from the stat mode, like the ls long format
     private static function permString(int $mode): string
     {
         $bits = [0x0100,0x0080,0x0040, 0x0020,0x0010,0x0008, 0x0004,0x0002,0x0001];
@@ -422,8 +385,6 @@ final class FilesViewerEndpoint
         return $s;
     }
 
-    // full ls-style string for display: type char, rwx, and the setuid/setgid/
-    // sticky letters (s/S/t/T). used for the "symbolic" permission view
     private static function permStringFull(int $mode): string
     {
         $fmt  = $mode & 0170000;
@@ -435,16 +396,12 @@ final class FilesViewerEndpoint
         return $s;
     }
 
-    // octal permissions for display: three digits normally (750), four only when a
-    // setuid/setgid/sticky bit is set (1777), matching how people read modes
     private static function octalPerms(int $mode): string
     {
         $m = $mode & 07777;
         return ($m & 07000) ? sprintf('%04o', $m) : sprintf('%o', $m & 0777);
     }
 
-    // current owner, group and mode of a file or folder, used to seed the owner
-    // and permission dialogs. works on a dir too, unlike meta.
     public static function attrs(string $req): array
     {
         $real = self::safePath($req, '');
@@ -475,8 +432,6 @@ final class FilesViewerEndpoint
         return (string)$gid;
     }
 
-    // binary content is refused here, so the page never tries to render a blob as text
-
     public static function preview(string $req): array
     {
         $real = self::safePath($req, 'file');
@@ -487,7 +442,6 @@ final class FilesViewerEndpoint
         $cat  = self::category($ext);
         $size = (int)@filesize($real);
 
-        // only text and markdown are server-rendered; the rest is handled client side
         if ($cat !== 'code' && $cat !== 'md') {
             return ['ok' => true, 'kind' => 'none', 'category' => $cat, 'size' => $size];
         }
@@ -495,18 +449,16 @@ final class FilesViewerEndpoint
         $capBytes = max(64, (int)$cfg['text_cap_kb']) * 1024;
         $fh = @fopen($real, 'rb');
         if ($fh === false) return ['ok' => false, 'error' => 'cannot read file'];
-        $content = (string)fread($fh, $capBytes + 1);  // one extra byte tells us if it was longer
+        $content = (string)fread($fh, $capBytes + 1);
         fclose($fh);
 
         $truncated = strlen($content) > $capBytes;
         if ($truncated) $content = substr($content, 0, $capBytes);
 
-        // a NUL byte in the head means this is not text we should try to render
         if (strpos($content, "\0") !== false) {
             return ['ok' => true, 'kind' => 'binary', 'category' => $cat, 'size' => $size];
         }
 
-        // make sure the payload is valid utf-8 for transport, lossy if it has to be
         if (function_exists('mb_check_encoding') && !mb_check_encoding($content, 'UTF-8')) {
             $content = mb_convert_encoding($content, 'UTF-8', 'UTF-8');
         }
@@ -525,8 +477,6 @@ final class FilesViewerEndpoint
         ];
     }
 
-    // extension to a highlight.js language id where it is unambiguous, else empty
-    // and the highlighter auto-detects
     private static function hljsLang(string $ext): string
     {
         static $map = [
@@ -539,10 +489,6 @@ final class FilesViewerEndpoint
         return $map[strtolower($ext)] ?? '';
     }
 
-    // shells out to a list-only command picked by the file suffix. the path is
-    // the single argument and is escaped, the flags never extract, output is
-    // bounded, and unknown archive types are reported rather than guessed.
-
     public static function archiveList(string $req): array
     {
         $real = self::safePath($req, 'file');
@@ -550,61 +496,45 @@ final class FilesViewerEndpoint
 
         $cfg   = self::config();
         $max   = max(50, (int)$cfg['archive_max']);
-        $lower = strtolower(basename($real));
         $arg   = escapeshellarg($real);
 
-        // an archive can sit behind a trailing suffix like backup.zip.071.bak.
-        // drop trailing dot segments until the name ends in a known archive form,
-        // keeping compound endings like .tar.gz intact for the checks below.
-        $archEnd = ['.zip','.tar','.tar.gz','.tgz','.tar.bz2','.tbz','.tbz2','.tar.xz','.txz','.gz','.bz2','.xz','.7z','.rar'];
-        $scan = $lower;
-        while (strpos($scan, '.') !== false) {
-            $hit = false;
-            foreach ($archEnd as $ae) { if (str_ends_with($scan, $ae)) { $hit = true; break; } }
-            if ($hit) break;
-            $scan = substr($scan, 0, strrpos($scan, '.'));
-        }
-
-        $mode = '';
-        if (str_ends_with($scan, '.zip')) {
-            $cmd = 'unzip -l ' . $arg; $mode = 'zip';
-        } elseif (str_ends_with($scan, '.tar')) {
-            $cmd = 'tar -tvf ' . $arg; $mode = 'tar';
-        } elseif (str_ends_with($scan, '.tar.gz') || str_ends_with($scan, '.tgz')) {
-            $cmd = 'tar -tzvf ' . $arg; $mode = 'tar';
-        } elseif (str_ends_with($scan, '.tar.bz2') || str_ends_with($scan, '.tbz') || str_ends_with($scan, '.tbz2')) {
-            $cmd = 'tar -tjvf ' . $arg; $mode = 'tar';
-        } elseif (str_ends_with($scan, '.tar.xz') || str_ends_with($scan, '.txz')) {
-            $cmd = 'tar -tJvf ' . $arg; $mode = 'tar';
-        } else {
-            // 7z, rar and standalone gz/bz2/xz need tools we do not assume are present
-            return ['ok' => true, 'kind' => 'arch_unsupported', 'category' => 'arch', 'size' => (int)@filesize($real)];
-        }
-
-        // timeout guards a pathological archive, head bounds the output volume
-        $full  = 'timeout 20 ' . $cmd . ' 2>/dev/null | head -n ' . ($max + 40);
-        $lines = [];
-        @exec($full, $lines);
-
+        [$fmt] = self::archiveKind(basename($real));
         $entries = [];
-        foreach ($lines as $ln) {
-            if ($mode === 'zip') {
-                // length  date  time  name
-                if (preg_match('/^\s*(\d+)\s+\d{4}-\d\d-\d\d\s+\d\d:\d\d\s+(.+)$/', $ln, $m)) {
-                    $nm = $m[2];
-                    $entries[] = ['name' => $nm, 'size' => (int)$m[1], 'is_dir' => (substr($nm, -1) === '/')];
-                }
-            } else {
-                // tar verbose: perms owner/group size date time name
-                if (preg_match('#^([dl\-][rwxsStT\-]{9})\S*\s+\S+\s+(\d+)\s+\d{4}-\d\d-\d\d\s+\d\d:\d\d\s+(.+)$#', $ln, $m)) {
+        $truncated = false;
+
+        if ($fmt === 'zip') {
+            $z = new \ZipArchive();
+            if ($z->open($real, \ZipArchive::RDONLY) !== true) return ['ok' => false, 'error' => 'not a zip archive, or damaged'];
+            $n = $z->numFiles;
+            for ($i = 0; $i < $n && $i < $max; $i++) {
+                $st = $z->statIndex($i);
+                if ($st === false) continue;
+                $nm = str_replace('\\', '/', (string)$st['name']);
+                $entries[] = ['name' => $nm, 'size' => (int)$st['size'], 'is_dir' => (substr($nm, -1) === '/')];
+            }
+            $truncated = $n > $max;
+            $z->close();
+        } else {
+            switch ($fmt) {
+                case 'tar':  $cmd = 'tar -tvf ' . $arg;  break;
+                case 'tgz':  $cmd = 'tar -tzvf ' . $arg; break;
+                case 'tbz2': $cmd = 'tar -tjvf ' . $arg; break;
+                case 'txz':  $cmd = 'tar -tJvf ' . $arg; break;
+                default:
+                    return ['ok' => true, 'kind' => 'arch_unsupported', 'category' => 'arch', 'size' => (int)@filesize($real)];
+            }
+            $lines = [];
+            @exec('timeout 20 ' . $cmd . ' 2>/dev/null | head -n ' . ($max + 40), $lines);
+            foreach ($lines as $ln) {
+                if (preg_match('#^([dl\-][rwxsStT\-]{9})\S*\s+\S+\s+(\d+)\s+(?:\d{4}-\d\d-\d\d|\d\d-\d\d-\d{4})\s+\d\d:\d\d\s+(.+)$#', $ln, $m)) {
                     $nm    = $m[3];
                     $isDir = ($m[1][0] === 'd') || (substr($nm, -1) === '/');
-                    $arrow = strpos($nm, ' -> ');         // symlinks show as "name -> target"
+                    $arrow = strpos($nm, ' -> ');
                     if ($arrow !== false) $nm = substr($nm, 0, $arrow);
                     $entries[] = ['name' => $nm, 'size' => (int)$m[2], 'is_dir' => $isDir];
                 }
+                if (count($entries) >= $max) { $truncated = true; break; }
             }
-            if (count($entries) >= $max) break;
         }
 
         return [
@@ -612,52 +542,178 @@ final class FilesViewerEndpoint
             'kind'      => 'archive',
             'category'  => 'arch',
             'count'     => count($entries),
-            'truncated' => (count($entries) >= $max),
+            'truncated' => $truncated,
             'entries'   => $entries,
+            'extract'   => self::archiveExtractName($real),
         ];
     }
 
-    // every write passes through here: POST only, the csrf check in run(), the
-    // path resolved and kept inside the roots, a root mount never the target of a
-    // destructive op, and a line in the audit log. every operation below shares it.
+    public static function archiveKind(string $name): array
+    {
+        $ends = ['.tar.gz' => 'tgz', '.tgz' => 'tgz', '.tar.bz2' => 'tbz2', '.tbz2' => 'tbz2', '.tbz' => 'tbz2',
+                 '.tar.xz' => 'txz', '.txz' => 'txz', '.tar' => 'tar', '.zip' => 'zip',
+                 '.gz' => '', '.bz2' => '', '.xz' => '', '.7z' => '', '.rar' => ''];
+        $scan = strtolower($name);
+        while (strpos($scan, '.') !== false) {
+            foreach ($ends as $suffix => $fmt) {
+                if (str_ends_with($scan, $suffix)) {
+                    return [$fmt, substr($name, 0, strlen($scan) - strlen($suffix))];
+                }
+            }
+            $scan = substr($scan, 0, strrpos($scan, '.'));
+        }
+        return ['', $name];
+    }
 
-    private const WRITE_ACTIONS = ['create','rename','delete','save','move','copy','chmod','chown','upload','upload_cancel','job_cancel','recycle_restore','recycle_purge','space_start','fav_toggle'];
+    private static function archiveExtractName(string $real): ?array
+    {
+        [$fmt, $stem] = self::archiveKind(basename($real));
+        if ($fmt === '' || self::safeName($stem) === null) return null;
+        $dest = dirname($real) . '/' . $stem;
+        return ['folder' => $stem, 'taken' => file_exists($dest) || is_link($dest), 'writable' => is_writable(dirname($real))];
+    }
+
+    private static function opCompress(): array
+    {
+        $list = json_decode((string)($_POST['sources'] ?? ''), true);
+        $fmt  = (string)($_POST['format'] ?? 'zip');
+        $name = self::safeName((string)($_POST['name'] ?? ''));
+        if (!is_array($list) || !$list) return ['ok' => false, 'error' => 'no items'];
+        if (!in_array($fmt, ['zip', 'tgz'], true)) return ['ok' => false, 'error' => 'bad format'];
+        if ($name === null) return ['ok' => false, 'error' => 'bad archive name'];
+
+        $sources = []; $parent = null;
+        foreach ($list as $p) {
+            $real = self::safePath((string)$p, '');
+            if ($real === null) return ['ok' => false, 'error' => 'a source path is not allowed'];
+            if (self::isRootPath($real)) return ['ok' => false, 'error' => 'cannot compress a root'];
+            $dir = dirname($real);
+            if ($parent === null) $parent = $dir;
+            elseif ($dir !== $parent) return ['ok' => false, 'error' => 'items must sit in the same folder'];
+            $sources[] = $real;
+        }
+        if (!is_writable($parent)) return ['ok' => false, 'error' => 'the folder is not writable'];
+
+        $ext  = $fmt === 'zip' ? '.zip' : '.tar.gz';
+        $name = preg_replace('/\.(zip|tar\.gz|tgz)$/i', '', $name);
+        if ($name === '' || $name === '.' || $name === '..') return ['ok' => false, 'error' => 'bad archive name'];
+        $dest = $parent . '/' . $name . $ext;
+        for ($i = 1; (file_exists($dest) || is_link($dest)) && $i < 10000; $i++) $dest = $parent . '/' . $name . ' (' . $i . ')' . $ext;
+
+        $id = self::jobNewId();
+        if (!self::jobSpawn($id, ['op' => 'compress', 'sources' => $sources, 'dest' => $dest, 'format' => $fmt])) {
+            return ['ok' => false, 'error' => 'could not start the job'];
+        }
+        self::audit('compress', ['dest' => $dest, 'count' => count($sources), 'job' => $id]);
+        return ['ok' => true, 'job' => $id, 'name' => basename($dest)];
+    }
+
+    public static function zipSources(string $json): array
+    {
+        $list = json_decode($json, true);
+        if (!is_array($list) || !$list) return ['ok' => false, 'error' => 'no items'];
+        if (count($list) > self::LIST_MAX) return ['ok' => false, 'error' => 'too many items'];
+
+        $items = []; $names = [];
+        foreach ($list as $p) {
+            $real = self::safePath((string)$p, '');
+            if ($real === null) return ['ok' => false, 'error' => 'a path is not allowed'];
+            if (self::isRootPath($real)) return ['ok' => false, 'error' => 'cannot pack a root'];
+            $name = basename($real);
+            for ($i = 2; isset($names[$name]); $i++) $name = basename($real) . ' (' . $i . ')';
+            $names[$name] = true;
+            $items[] = ['path' => $real, 'name' => $name];
+        }
+        return ['ok' => true, 'items' => $items];
+    }
+
+    public static function zipName(string $req, array $items): string
+    {
+        $name = self::safeName($req) ?? '';
+        $name = preg_replace('/\.zip$/i', '', $name);
+        if ($name === '' || $name === '.' || $name === '..') $name = count($items) === 1 ? (string)$items[0]['name'] : 'files';
+        return $name . '.zip';
+    }
+
+    private static function zipInfo(): array
+    {
+        if (!self::validateNonce()) return ['ok' => false, 'error' => 'this page has been open too long, reload it'];
+        $src = self::zipSources((string)($_POST['paths'] ?? ''));
+        if (!$src['ok']) return $src;
+
+        $files = 0; $bytes = 0; $seen = 0; $capped = false;
+        $stop = microtime(true) + 2.0;
+        $walk = function (string $path) use (&$walk, &$files, &$bytes, &$seen, &$capped, $stop): void {
+            if ($capped || is_link($path)) return;
+            if (++$seen > 20000 || microtime(true) > $stop) { $capped = true; return; }
+            if (is_file($path)) { $files++; $bytes += (int)@filesize($path); return; }
+            if (!is_dir($path)) return;
+            foreach ((array)@scandir($path) as $e) {
+                if ($e === '.' || $e === '..') continue;
+                $walk($path . '/' . $e);
+                if ($capped) return;
+            }
+        };
+        foreach ($src['items'] as $it) $walk($it['path']);
+        return ['ok' => true, 'files' => $files, 'bytes' => $bytes, 'capped' => $capped];
+    }
+
+    private static function opExtract(): array
+    {
+        $real = self::safePath((string)($_POST['path'] ?? ''), 'file');
+        if ($real === null) return ['ok' => false, 'error' => 'path not allowed'];
+
+        [$fmt, $stem] = self::archiveKind(basename($real));
+        if ($fmt === '') return ['ok' => false, 'error' => 'this archive type cannot be extracted here'];
+        if (self::safeName($stem) === null) return ['ok' => false, 'error' => 'bad folder name'];
+
+        $parent = dirname($real);
+        if (!is_writable($parent)) return ['ok' => false, 'error' => 'the folder is not writable'];
+
+        foreach ((array)@glob($parent . '/.fvextract-*', GLOB_ONLYDIR) as $old) {
+            $mt = @filemtime($old);
+            if ($mt !== false && $mt < time() - 86400 && self::removeTree($old)) self::audit('extract_cleanup', ['path' => $old]);
+        }
+
+        $id   = self::jobNewId();
+        $dest = $parent . '/.fvextract-' . $id;
+        if (!self::jobSpawn($id, ['op' => 'extract', 'archive' => $real, 'dest' => $dest, 'name' => $stem, 'format' => $fmt])) {
+            return ['ok' => false, 'error' => 'could not start the job'];
+        }
+        self::audit('extract', ['archive' => $real, 'dest' => $parent . '/' . $stem, 'job' => $id]);
+        return ['ok' => true, 'job' => $id];
+    }
+
+    private const WRITE_ACTIONS = ['create','rename','delete','save','move','copy','chmod','chown','upload','upload_cancel','job_cancel','recycle_restore','recycle_purge','space_start','fav_toggle','extract','compress','zip_info','search_start','newperms','checksum_start'];
     private const AUDIT_LOG     = '/var/log/filesviewer.log';
-    private const EDIT_MAX_BYTES = 2097152;   // 2 MiB cap for in-browser editing
+    private const EDIT_MAX_BYTES = 2097152;
 
-    private static int  $obBase = 0;      // output buffer level on entry
-    private static bool $obOn   = false;  // we trapped output, respond drops it
-    private static bool $responded = false; // a body was written; shutdown guard checks this
+    private static int  $obBase = 0;
+    private static bool $obOn   = false;
+    private static bool $responded = false;
 
     public static function isWriteAction(string $action): bool
     {
         return in_array($action, self::WRITE_ACTIONS, true);
     }
 
-    // a write must never ride on GET, so a stray link or a prefetch cannot mutate the disk
     private static function requirePost(): bool
     {
         return ($_SERVER['REQUEST_METHOD'] ?? '') === 'POST';
     }
 
-    // one path component the user supplied (new file, rename target). no
-    // separators, no dot-dirs, no control bytes, length kept sane.
     public static function safeName(string $name): ?string
     {
         $name = trim($name);
         if ($name === '' || $name === '.' || $name === '..') return null;
         if (strlen($name) > 255) return null;
-        if (strpbrk($name, "/\\") !== false) return null;                       // no path separators
-        for ($i = 0, $n = strlen($name); $i < $n; $i++) {                       // no control bytes
+        if (strpbrk($name, "/\\") !== false) return null;
+        for ($i = 0, $n = strlen($name); $i < $n; $i++) {
             if (ord($name[$i]) < 0x20) return null;
         }
         return $name;
     }
 
-    // for a path that does not exist yet (create, or the destination of a
-    // move/copy/rename): vet the leaf as a name and require the parent to be a
-    // real dir inside the roots. realpath cannot vet the leaf since it is not
-    // there yet, so the parent is what we confine.
     public static function safeNewPath(string $parentReq, string $name): ?array
     {
         $dir = self::safePath($parentReq, 'dir');
@@ -667,7 +723,6 @@ final class FilesViewerEndpoint
         return ['dir' => $dir, 'name' => $leaf, 'path' => $dir . DIRECTORY_SEPARATOR . $leaf];
     }
 
-    // a root mount itself is never a valid target for delete/rename/move
     public static function isRootPath(string $real): bool
     {
         foreach (self::allowedRoots() as $root) {
@@ -676,9 +731,6 @@ final class FilesViewerEndpoint
         return false;
     }
 
-    // /mnt/user, /mnt/cache and every disk are mount points, not ordinary folders.
-    // the kernel refuses to remove one, but a recursive delete empties it first and
-    // takes every share with it, so they are off limits for anything destructive
     public static function isMountPoint(string $real): bool
     {
         $here = @stat($real);
@@ -691,18 +743,14 @@ final class FilesViewerEndpoint
         return self::isRootPath($real) || self::isMountPoint($real);
     }
 
-    // terse audit line per write. /var/log is tmpfs on unraid, so this is a
-    // session trail, not a permanent record. the recycle bin is the durable net.
     private static function audit(string $action, array $fields): void
     {
+        if ((int)@filesize(self::AUDIT_LOG) > 2097152) @rename(self::AUDIT_LOG, self::AUDIT_LOG . '.1');
         $parts = [date('Y-m-d H:i:s'), $action];
         foreach ($fields as $k => $v) $parts[] = $k . '=' . str_replace(["\n","\r"], ' ', (string)$v);
         @file_put_contents(self::AUDIT_LOG, implode('  ', $parts) . "\n", FILE_APPEND | LOCK_EX);
     }
 
-    // if the script dies before respond() (a fatal that skips the try/catch, e.g.
-    // a memory or limit error), turn the otherwise empty 200 body into a json
-    // error carrying the real reason, so the ui can show it instead of "HTTP 200"
     public static function shutdownGuard(): void
     {
         if (self::$responded) return;
@@ -720,12 +768,11 @@ final class FilesViewerEndpoint
             JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
-    // one json writer for every action, so the shape and flags stay uniform
     private static function respond(array $payload, int $code = 200): void
     {
         self::$responded = true;
         if (self::$obOn) {
-            while (ob_get_level() > self::$obBase) ob_end_clean();   // drop trapped warnings/notices
+            while (ob_get_level() > self::$obBase) ob_end_clean();
             self::$obOn = false;
         }
         if (!headers_sent()) {
@@ -735,15 +782,10 @@ final class FilesViewerEndpoint
         echo json_encode($payload, JSON_UNESCAPED_SLASHES | JSON_INVALID_UTF8_SUBSTITUTE);
     }
 
-    // a long copy/move/delete cannot finish inside one request, so it runs
-    // detached and writes progress to a status file the ui polls. the spec goes
-    // over in the job dir, so nothing untrusted ever rides on the command line.
-
     public static function jobsBaseDir(): string { return '/tmp/filesviewer/jobs'; }
 
     private static function jobNewId(): string { return bin2hex(random_bytes(8)); }
 
-    // confine to hex ids, so an id from the client can never point outside the dir
     public static function jobDir(string $id): ?string
     {
         if (!preg_match('/^[a-f0-9]{16}$/', $id)) return null;
@@ -760,8 +802,6 @@ final class FilesViewerEndpoint
         return is_array($d) ? $d : null;
     }
 
-    // read, merge, write atomically: a poll never reads a half file and a partial
-    // update keeps the running counters
     public static function jobPatch(string $id, array $patch): bool
     {
         $dir = self::jobDir($id);
@@ -773,19 +813,16 @@ final class FilesViewerEndpoint
         return @rename($tmp, $dir . '/status.json');
     }
 
-    // job dirs are tiny but they pile up on a server that stays up for months
     private static function jobsTidy(): void
     {
         $cut = time() - 86400;
         foreach ((array)@glob(self::jobsBaseDir() . '/*', GLOB_ONLYDIR) as $d) {
             $m = @filemtime($d . '/status.json');
-            if ($m === false) $m = (int)@filemtime($d);   // a dir mid creation keeps its fresh mtime
+            if ($m === false) $m = (int)@filemtime($d);
             if ($m > 0 && $m < $cut) self::removeTree($d);
         }
     }
 
-    // hand the spec over in the job dir, so no untrusted data rides on the command
-    // line, then launch the worker detached
     private static function jobSpawn(string $id, array $spec): bool
     {
         self::jobsTidy();
@@ -803,9 +840,6 @@ final class FilesViewerEndpoint
         if ($st === null) { self::respond(['ok' => false, 'error' => 'no such job'], 404); return; }
         self::respond(['ok' => true, 'job' => $id, 'status' => $st]);
     }
-
-    // paths the user pinned, files or folders. they live on the flash so they follow
-    // the user to any browser, and the file is only touched when something changes.
 
     private const FAV_FILE = '/boot/config/plugins/filesviewer/favourites.json';
     private const FAV_MAX  = 20;
@@ -828,7 +862,7 @@ final class FilesViewerEndpoint
     private static function favSave(array $paths): bool
     {
         $json = json_encode(array_values($paths), JSON_UNESCAPED_SLASHES | JSON_PRETTY_PRINT);
-        if (@file_get_contents(self::FAV_FILE) === $json) return true;   // flash: no write without a change
+        if (@file_get_contents(self::FAV_FILE) === $json) return true;
 
         $dir = dirname(self::FAV_FILE);
         if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return false;
@@ -842,15 +876,12 @@ final class FilesViewerEndpoint
         return true;
     }
 
-    // a favourite whose parent is there but which is gone was really deleted, so it
-    // goes for good. one whose parent is missing too is an unmounted disk or a
-    // stopped array, and dropping those would wipe the list on every reboot
     private static function favPrune(array $paths, array &$live): array
     {
         $keep = [];
         foreach ($paths as $p) {
             if (@file_exists($p)) { $keep[] = $p; $live[] = $p; continue; }
-            if (!@is_dir(dirname($p))) $keep[] = $p;   // parent gone too: hold on to it
+            if (!@is_dir(dirname($p))) $keep[] = $p;
         }
         return $keep;
     }
@@ -864,7 +895,7 @@ final class FilesViewerEndpoint
 
         $out = [];
         foreach ($live as $p) {
-            if (self::safePath($p) === null) continue;   // the roots may have changed since it was pinned
+            if (self::safePath($p) === null) continue;
             $out[] = ['path' => $p, 'name' => basename($p), 'is_dir' => @is_dir($p)];
         }
         return $out;
@@ -899,10 +930,6 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'fav' => $on, 'entries' => self::favEntries()];
     }
 
-
-    // new empty file or folder inside an allowed parent. never clobbers an
-    // existing entry. the entry inherits the parent owner, group and mode, so it
-    // matches the share around it instead of landing root-owned.
     private static function opCreate(): array
     {
         $parent = (string)($_POST['parent'] ?? '');
@@ -916,7 +943,7 @@ final class FilesViewerEndpoint
         if ($kind === 'dir') {
             if (!@mkdir($t['path'], 0755)) return ['ok' => false, 'error' => 'could not create the folder'];
         } else {
-            $fh = @fopen($t['path'], 'x');                 // x fails if it appeared in the meantime
+            $fh = @fopen($t['path'], 'x');
             if ($fh === false) return ['ok' => false, 'error' => 'could not create the file'];
             fclose($fh);
         }
@@ -926,7 +953,6 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'path' => $t['path'], 'name' => $t['name']];
     }
 
-    // best effort: copy the parent owner/group and a sane mode onto a new entry
     private static function inheritParent(string $path, string $parent, bool $isDir): void
     {
         $st = @stat($parent);
@@ -934,12 +960,10 @@ final class FilesViewerEndpoint
         @chown($path, $st['uid']);
         @chgrp($path, $st['gid']);
         $mode = $st['mode'] & 0777;
-        if (!$isDir) $mode &= 0666;                        // a new file is not executable
+        if (!$isDir) $mode &= 0666;
         @chmod($path, $mode);
     }
 
-    // rename in place, within the same folder. refuses a root mount and never
-    // clobbers an existing name.
     private static function opRename(): array
     {
         $path = (string)($_POST['path'] ?? '');
@@ -961,12 +985,8 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'path' => $dest, 'name' => $leaf];
     }
 
-    // delete one or more items. the default mode moves them into the share's
-    // recycle bin as one event; permanent removes them for good. refuses roots.
     private static function opDelete(): array
     {
-        // the setting decides, not the caller. a request without the parameter used
-        // to fall through to a permanent delete while the bin was switched on
         $mode = self::config()['recycle'] ? 'trash' : 'permanent';
 
         $list = [];
@@ -989,12 +1009,10 @@ final class FilesViewerEndpoint
             $reals[] = $real;
         }
 
-        // the bin lives inside a share, so an item sitting directly under a disk
-        // or pool has nowhere to go. the client warns before it gets here
         if ($mode === 'trash' && self::binShareRoot($reals[0]) === null) $mode = 'permanent';
         if ($mode === 'trash') return self::opTrash($reals);
 
-        @set_time_limit(0);                                // a large tree must not be cut off mid-delete
+        @set_time_limit(0);
         $failed = [];
         foreach ($reals as $real) {
             if (!self::removeTree($real)) { $failed[] = basename($real); continue; }
@@ -1004,9 +1022,7 @@ final class FilesViewerEndpoint
              + ($failed && count($failed) === count($reals) ? ['error' => 'delete failed or incomplete'] : []);
     }
 
-    // recursive remove. a symlink is unlinked, never followed, so the delete can
-    // never walk out of the tree through a link.
-    private static function removeTree(string $path): bool
+    public static function removeTree(string $path): bool
     {
         if (is_link($path) || !is_dir($path)) return @unlink($path);
 
@@ -1018,20 +1034,10 @@ final class FilesViewerEndpoint
         return @rmdir($path) && $ok;
     }
 
-    // opens database files with immutable=1 over a readonly uri: no locks are
-    // taken and nothing is ever written, so a live application database cannot be
-    // disturbed. the price is honesty about wal: changes still sitting in the
-    // write ahead log are not visible, and a read can fail cleanly while the
-    // owner is writing. both outcomes are safe.
-
     private const DB_EXTS = ['db', 'db3', 'sqlite', 'sqlite3'];
 
     private static function sqliteEngine(): ?string
     {
-        // pdo first: it accepts uri filenames, so the immutable open (no locks,
-        // no writes, safe next to a live application) is available. the SQLite3
-        // class does not parse uris in this php build, so it is the fallback,
-        // opened plain readonly: never writes, but takes shared read locks
         if (class_exists('PDO') && in_array('sqlite', PDO::getAvailableDrivers(), true)) return 'pdo';
         if (class_exists('SQLite3')) return 'sqlite3';
         return null;
@@ -1046,7 +1052,6 @@ final class FilesViewerEndpoint
         return $sig === "SQLite format 3\x00";
     }
 
-    // sqlite uri: keep the slashes, escape what would break the query part
     private static function sqliteUri(string $real): string
     {
         return 'file:' . str_replace(['%', '#', '?'], ['%25', '%23', '%3F'], $real) . '?mode=ro&immutable=1';
@@ -1063,9 +1068,6 @@ final class FilesViewerEndpoint
                 $immutable = true;
                 return $c;
             }
-            // some sqlite builds honour uris without the open flag (SQLITE_USE_URI):
-            // probe the immutable open first, fall back to plain readonly. a failed
-            // probe cannot create anything since the mode is readonly
             try {
                 $c = new SQLite3(self::sqliteUri($real), SQLITE3_OPEN_READONLY);
                 $c->enableExceptions(true);
@@ -1078,14 +1080,12 @@ final class FilesViewerEndpoint
             $c->enableExceptions(true);
             return $c;
         } catch (Throwable $e) {
-            // the driver message carries the file path, so it goes to the log only
             error_log('[filesviewer] sqlite open: ' . $e->getMessage());
             $err = 'the file could not be opened as a database';
             return null;
         }
     }
 
-    // columns and rows as plain arrays, whichever engine is present
     private static function sqAll($c, string $sql, array $bind = []): array
     {
         if ($c instanceof SQLite3) {
@@ -1134,7 +1134,7 @@ final class FilesViewerEndpoint
             [, $tr] = self::sqAll($c, "select name, type from sqlite_master where type in ('table','view') and name not like 'sqlite_%' order by name");
 
             $tables = [];
-            $budget = microtime(true) + 3.0;      // row counts stop politely on huge libraries
+            $budget = microtime(true) + 3.0;
             $trunc  = false;
             foreach ($tr as $t) {
                 $name = (string)$t[0];
@@ -1180,8 +1180,6 @@ final class FilesViewerEndpoint
         }
 
         try {
-            // the name is trusted only after an exact match in sqlite_master, then
-            // quoted as an identifier. nothing from the client lands in sql raw
             [, $ex] = self::sqAll($c, "select 1 from sqlite_master where type in ('table','view') and name = ?", [$table]);
             if (!$ex) return ['ok' => false, 'error' => 'no such table'];
             $q = '"' . str_replace('"', '""', $table) . '"';
@@ -1200,7 +1198,6 @@ final class FilesViewerEndpoint
                 'offset' => $off, 'limit' => $lim, 'more' => $more];
     }
 
-    // json friendly cell: blobs become a size tag, long text is clipped
     private static function dbCell($v)
     {
         if ($v === null || is_int($v) || is_float($v)) return $v;
@@ -1210,9 +1207,6 @@ final class FilesViewerEndpoint
         return $s;
     }
 
-    // read only: ranks the direct children of a folder by the disk space they
-    // hold. the walk runs in the detached worker as a job, so the gui polls
-    // job_status and can cancel it like a copy
     private static function opSpaceStart(): array
     {
         if (!self::config()['space']) return ['ok' => false, 'error' => 'space analysis is off'];
@@ -1229,20 +1223,105 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'id' => $id];
     }
 
-    // a trash is a rename into <share>/.RecycleBin/<event>/ on the same
-    // filesystem, so it is instant and atomic at any size and never copies data.
-    // each delete run is one event folder holding the items under their share
-    // relative paths plus a meta.json that drives restore.
-    // the bin is reachable from this ui only: samba vetoes the folder name
-    // globally (managed block in smb-extra.conf, written by the plg) and the
-    // folder itself is root 0700, which also covers nfs.
+    private static function opSearchStart(): array
+    {
+        $real = self::safePath((string)($_POST['path'] ?? ''), 'dir');
+        if ($real === null) return ['ok' => false, 'error' => 'path not allowed'];
+        $q = trim((string)($_POST['q'] ?? ''));
+        if ($q === '' || strlen($q) > 200 || preg_match('/[\x00-\x1f\x7f\/]/', $q)) return ['ok' => false, 'error' => 'enter something to look for'];
+
+        $id = self::jobNewId();
+        if (!self::jobSpawn($id, ['op' => 'search', 'path' => $real, 'q' => $q])) {
+            return ['ok' => false, 'error' => 'cannot start the search'];
+        }
+        return ['ok' => true, 'id' => $id];
+    }
+
+    private static function diskInfo(): array
+    {
+        $out = [];
+        foreach (self::cachedIniRead('/var/local/emhttp/disks.ini', true) as $sec => $d) {
+            if (!is_array($d)) continue;
+            $name = (string)($d['name'] ?? $sec);
+            if (!preg_match('/^[A-Za-z0-9_.-]+$/', $name)) continue;
+            $out[$name] = [
+                'type'     => (string)($d['type'] ?? ''),
+                'id'       => (string)($d['id'] ?? ''),
+                'device'   => (string)($d['device'] ?? ''),
+                'bytes'    => (int)($d['size'] ?? 0) * 1024,
+                'fs'       => (string)($d['fsType'] ?? ''),
+                'temp'     => is_numeric($d['temp'] ?? '') ? (int)$d['temp'] : null,
+                'spundown' => (($d['spundown'] ?? '0') === '1'),
+            ];
+        }
+        return $out;
+    }
+
+    private static function diskRoots(array $info): array
+    {
+        $roots = [];
+        foreach ($info as $name => $d) {
+            if (!in_array($d['type'], ['Data', 'Cache'], true) || !is_dir('/mnt/' . $name)) continue;
+            $roots[] = '/mnt/' . $name;
+        }
+        if ($roots) return $roots;
+        foreach ((array)@glob('/mnt/*', GLOB_ONLYDIR) as $d) {
+            if (!in_array(basename($d), ['user', 'user0', 'disks', 'remotes', 'addons', 'rootshare'], true)) $roots[] = $d;
+        }
+        return $roots;
+    }
+
+    private static function diskCard(string $name, array $info, array $roots): array
+    {
+        $d = $info[$name] ?? null;
+        $card = ['disk' => $name, 'id' => '', 'device' => '', 'bytes' => 0, 'fs' => '', 'temp' => null, 'pool' => false, 'members' => []];
+        if ($d === null) return $card;
+        $card['id'] = $d['id']; $card['device'] = $d['device']; $card['bytes'] = $d['bytes'];
+        $card['fs'] = $d['fs']; $card['temp'] = $d['temp']; $card['pool'] = ($d['type'] === 'Cache');
+        if ($card['pool']) {
+            foreach ($info as $other => $od) {
+                if ($other === $name || $od['type'] !== 'Cache' || !preg_match('/^' . preg_quote($name, '/') . '\d+$/', $other)) continue;
+                if (in_array('/mnt/' . $other, $roots, true)) continue;
+                $card['members'][] = ['id' => $od['id'], 'device' => $od['device'], 'bytes' => $od['bytes']];
+            }
+        }
+        return $card;
+    }
+
+    public static function locate(string $req): array
+    {
+        $real = self::safePath($req, '');
+        if ($real === null) return ['ok' => false, 'error' => 'path not allowed'];
+        $info  = self::diskInfo();
+        $roots = self::diskRoots($info);
+        $found = [];
+
+        if (preg_match('#^/mnt/user0?/(.+)$#', $real, $m)) {
+            foreach ($roots as $root) {
+                $p  = $root . '/' . $m[1];
+                $st = @lstat($p);
+                if ($st === false) continue;
+                $kind = $st['mode'] & 0170000;
+                $found[] = ['path' => $p, 'is_dir' => $kind === 0040000, 'link' => $kind === 0120000,
+                            'size' => $kind === 0100000 ? (int)$st['size'] : 0, 'mtime' => (int)$st['mtime']] + self::diskCard(basename($root), $info, $roots);
+            }
+            return ['ok' => true, 'mode' => 'user', 'name' => basename($real), 'is_dir' => is_dir($real), 'checked' => count($roots), 'locations' => $found];
+        }
+
+        foreach ($roots as $root) {
+            if ($real === $root || strpos($real, $root . '/') !== 0) continue;
+            $st = @lstat($real);
+            $kind = $st !== false ? ($st['mode'] & 0170000) : 0;
+            $found[] = ['path' => $real, 'is_dir' => $kind === 0040000, 'link' => $kind === 0120000,
+                        'size' => $kind === 0100000 ? (int)$st['size'] : 0, 'mtime' => $st !== false ? (int)$st['mtime'] : 0] + self::diskCard(basename($root), $info, $roots);
+            return ['ok' => true, 'mode' => 'disk', 'name' => basename($real), 'is_dir' => is_dir($real), 'checked' => 1, 'locations' => $found];
+        }
+        return ['ok' => false, 'error' => 'this path is not on an array disk or a pool'];
+    }
 
     private const BIN_DIR  = '.RecycleBin';
     private const EVENT_RX = '/^\d{8}-\d{6}-[a-z0-9]{6}$/';
 
-    // share level root that owns a path: /mnt/<top>/<share>. null when the path
-    // is too shallow (roots, tops, or the share itself), where only a permanent
-    // delete makes sense
     private static function binShareRoot(string $real): ?string
     {
         $parts = array_values(array_filter(explode('/', $real), 'strlen'));
@@ -1250,7 +1329,6 @@ final class FilesViewerEndpoint
         return '/mnt/' . $parts[1] . '/' . $parts[2];
     }
 
-    // same, but for a browse location where the share folder itself counts
     private static function binScopeRoot(string $real): ?string
     {
         $parts = array_values(array_filter(explode('/', $real), 'strlen'));
@@ -1264,7 +1342,6 @@ final class FilesViewerEndpoint
         @chown($dir, $basis['uid']); @chgrp($dir, $basis['gid']); @chmod($dir, $basis['mode'] & 0777);
     }
 
-    // create every missing level of $rel under $base, inheriting the share owner
     private static function makeDirsInherit(string $base, string $rel, $basis): ?string
     {
         $cur = $base;
@@ -1299,12 +1376,8 @@ final class FilesViewerEndpoint
             @mkdir($bin);
             if (!is_dir($bin)) return ['ok' => false, 'error' => 'cannot create the recycle bin'];
         }
-        // root 0700 keeps smb and nfs out even where the veto is overridden per
-        // share; enforcing it on every trash also heals bins from older builds
         @chown($bin, 0); @chgrp($bin, 0); @chmod($bin, 0700);
 
-        // the whole point of the design: a trash must be a same filesystem
-        // rename. anything else would mean copying data, so it is refused
         $bs = @stat($bin);
         foreach ($reals as $real) {
             $ps = @stat(dirname($real));
@@ -1343,9 +1416,6 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'mode' => 'trash', 'event' => $id, 'moved' => count($items), 'failed' => $failed];
     }
 
-    // bins to look at for a scope: the current share, or every share style top
-    // across the array, pools and mounted devices. user0 is skipped as a legacy
-    // duplicate of user
     private static function recycleBins(string $scope, string $path): array
     {
         if ($scope === 'share') {
@@ -1381,9 +1451,6 @@ final class FilesViewerEndpoint
                     $names[] = basename((string)($it['rel'] ?? ''));
                     if (isset($it['size'])) $size += (int)$it['size']; else $sized = false;
                 }
-                // a bin restored from a backup into a different share still carries
-                // the old paths, and restore will refuse every item. say so here
-                // instead of letting the user find out by pressing the button
                 $home    = (string)($meta['share_root'] ?? '');
                 $foreign = ($home !== '' && $home !== dirname($bin)) ? $home : '';
 
@@ -1400,8 +1467,6 @@ final class FilesViewerEndpoint
                     'size'       => $size,
                     'size_partial' => !$sized,
                 ];
-                // the same physical event can show through /mnt/user and a disk
-                // path at once; the user view wins
                 if (!isset($events[$e]) || strpos($ed, '/mnt/user/') === 0) $events[$e] = $row;
             }
         }
@@ -1415,8 +1480,6 @@ final class FilesViewerEndpoint
                 'enabled' => $cfg['recycle'], 'days' => $cfg['recycle_days']];
     }
 
-    // an event reference from the client is trusted only after it resolves to
-    // exactly <mnt>/<top>/<share>/.RecycleBin/<id>
     private static function eventPath(string $req): ?string
     {
         if ($req === '' || strpos($req, "\0") !== false || strpos($req, '..') !== false) return null;
@@ -1447,7 +1510,6 @@ final class FilesViewerEndpoint
         foreach ($items as $it) {
             $rel  = (string)($it['rel'] ?? '');
             $dest = (string)($it['original'] ?? '');
-            // tampered metadata must not steer a rename outside this share
             if ($rel === '' || strpos($rel, '..') !== false ||
                 strpos($dest, '..') !== false || strpos($dest, $shareRoot . '/') !== 0) {
                 $failed[] = $rel; $left[] = $it; continue;
@@ -1498,8 +1560,6 @@ final class FilesViewerEndpoint
         $bins  = self::recycleBins($scope, (string)($_POST['path'] ?? ''));
         $days  = self::config()['recycle_days'];
 
-        // never means nothing ages out: an expired sweep is a no-op, while an
-        // explicit empty (mode all) still clears the bin
         if ($mode === 'expired' && $days === 'never') return ['ok' => true, 'purged' => 0];
         $cut = time() - (int)$days * 86400;
 
@@ -1508,7 +1568,7 @@ final class FilesViewerEndpoint
             foreach (scandir($bin) ?: [] as $e) {
                 if (!preg_match(self::EVENT_RX, $e)) continue;
                 $ed = $bin . '/' . $e;
-                if (!file_exists($ed) && !is_link($ed)) continue;   // already gone through another view of the same share
+                if (!file_exists($ed) && !is_link($ed)) continue;
                 if ($mode === 'expired' && self::eventTime($e, $ed) > $cut) continue;
                 if (self::removeTree($ed)) $n++; else $bad++;
             }
@@ -1525,7 +1585,6 @@ final class FilesViewerEndpoint
         return $dt ? $dt->getTimestamp() : (int)@filemtime($dir);
     }
 
-    // drop an empty bin folder so shares stay clean; it comes back on the next trash
     private static function binTidy(string $bin): void
     {
         if (!is_dir($bin)) return;
@@ -1533,9 +1592,6 @@ final class FilesViewerEndpoint
         if (!$rest) @rmdir($bin);
     }
 
-
-    // full text of a file for the editor, plus the mtime that seeds the stale
-    // guard. refuses anything too large, binary or not valid utf-8.
     public static function fileText(string $req): array
     {
         $real = self::safePath($req, 'file');
@@ -1554,10 +1610,6 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'content' => $content, 'mtime' => (int)@filemtime($real), 'size' => $size];
     }
 
-    // save edited text back to a file. the write goes to a temp file in the same
-    // directory then renames over the target, so a reader never sees a half file.
-    // owner, group and mode are carried over. the stale guard refuses a save when
-    // the file changed since it was opened, unless the client forces it.
     private static function opSave(): array
     {
         $path    = (string)($_POST['path'] ?? '');
@@ -1590,10 +1642,6 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'mtime' => (int)@filemtime($real), 'size' => strlen($content)];
     }
 
-
-    // change mode on a file or folder, optionally through a directory tree. the
-    // recursive walk applies the same mode to every entry, like chmod -R, and
-    // skips symlinks so a link target outside the tree is never touched.
     private static function opChmod(): array
     {
         $path = (string)($_POST['path'] ?? '');
@@ -1616,7 +1664,6 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'path' => $real, 'mode' => sprintf('%04o', $mode), 'perms' => self::permString((int)@fileperms($real))];
     }
 
-    // accept an octal string like "644", "0644" or "0755"; null if it is not one
     private static function parseMode(string $s): ?int
     {
         $s = trim($s);
@@ -1624,7 +1671,6 @@ final class FilesViewerEndpoint
         return octdec($s) & 07777;
     }
 
-    // children first, then self, so a directory keeps its bits while we descend
     private static function chmodTree(string $path, int $mode): bool
     {
         if (is_link($path)) return true;
@@ -1638,9 +1684,6 @@ final class FilesViewerEndpoint
         return @chmod($path, $mode) && $ok;
     }
 
-    // change owner and/or group. an empty field means leave that part as is. a
-    // recursive run walks a directory tree; symlinks are retargeted with lchown,
-    // never the file they point to.
     private static function opChown(): array
     {
         $path = (string)($_POST['path'] ?? '');
@@ -1673,8 +1716,6 @@ final class FilesViewerEndpoint
         ];
     }
 
-    // a digit string is taken as a numeric id; a name is resolved via posix.
-    // returns the id, or null when the name is unknown.
     private static function resolveUid(string $s): ?int
     {
         if (ctype_digit($s)) return (int)$s;
@@ -1688,8 +1729,6 @@ final class FilesViewerEndpoint
         return null;
     }
 
-    // owner/group on one entry, -1 leaves that part. a symlink is changed with
-    // lchown/lchgrp so the link itself moves, not its target.
     private static function chownOne(string $path, int $uid, int $gid): bool
     {
         $link = is_link($path);
@@ -1710,9 +1749,55 @@ final class FilesViewerEndpoint
         return $ok;
     }
 
+    private static function opNewPerms(): array
+    {
+        $real = self::safePath((string)($_POST['path'] ?? ''), '');
+        if ($real === null) return ['ok' => false, 'error' => 'path not allowed'];
+        if (self::isRootPath($real)) return ['ok' => false, 'error' => 'cannot change a root'];
 
-    // validate the selection and the destination, then hand a copy or move to the
-    // background worker. a cross-mountpoint case asks the client to confirm first.
+        $uid = self::resolveUid('nobody');
+        $gid = self::resolveGid('users');
+        if ($uid === null || $gid === null) return ['ok' => false, 'error' => 'the nobody user or the users group is missing'];
+
+        @set_time_limit(0);
+        $ok = self::newPermsTree($real, $uid, $gid);
+        clearstatcache(true, $real);
+        self::audit('newperms', ['path' => $real]);
+        if (!$ok) return ['ok' => false, 'error' => 'some entries could not be changed'];
+        return ['ok' => true, 'path' => $real];
+    }
+
+    private static function newPermsTree(string $path, int $uid, int $gid): bool
+    {
+        if (is_link($path)) return true;
+        $ok = self::chownOne($path, $uid, $gid);
+        if (is_dir($path)) {
+            foreach (scandir($path) ?: [] as $e) {
+                if ($e === '.' || $e === '..' || $e === self::BIN_DIR) continue;
+                $ok = self::newPermsTree($path . DIRECTORY_SEPARATOR . $e, $uid, $gid) && $ok;
+            }
+            return @chmod($path, 0777) && $ok;
+        }
+        return @chmod($path, 0666) && $ok;
+    }
+
+    private const HASH_ALGOS = ['sha256', 'sha1', 'md5', 'sha512'];
+
+    private static function opChecksumStart(): array
+    {
+        $real = self::safePath((string)($_POST['path'] ?? ''), 'file');
+        if ($real === null) return ['ok' => false, 'error' => 'path not allowed'];
+        $algo = strtolower((string)($_POST['algo'] ?? 'sha256'));
+        if (!in_array($algo, self::HASH_ALGOS, true)) return ['ok' => false, 'error' => 'unknown algorithm'];
+        if (!is_readable($real)) return ['ok' => false, 'error' => 'cannot read file'];
+
+        $id = self::jobNewId();
+        if (!self::jobSpawn($id, ['op' => 'checksum', 'path' => $real, 'algo' => $algo])) {
+            return ['ok' => false, 'error' => 'cannot start'];
+        }
+        return ['ok' => true, 'id' => $id];
+    }
+
     private static function opCopyMove(string $op): array
     {
         $list      = json_decode((string)($_POST['sources'] ?? ''), true);
@@ -1731,10 +1816,8 @@ final class FilesViewerEndpoint
             $real = self::safePath((string)$p, '');
             if ($real === null) return ['ok' => false, 'error' => 'a source path is not allowed'];
             if (self::isRootPath($real)) return ['ok' => false, 'error' => 'cannot ' . $op . ' a root'];
-            // copying a mount point only reads it, moving one would empty it
             if ($op === 'move' && self::isMountPoint($real)) return ['ok' => false, 'error' => 'cannot move a mounted share or disk'];
             if ($real === $dest)        return ['ok' => false, 'error' => 'source and destination are the same'];
-            // destination must not sit inside a source folder, or we would recurse into ourselves
             if (is_dir($real) && strpos($dest . '/', rtrim($real, '/') . '/') === 0) {
                 return ['ok' => false, 'error' => 'cannot ' . $op . ' a folder into itself'];
             }
@@ -1752,9 +1835,6 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'job' => $id];
     }
 
-    // the unraid shfs footgun: moving or copying between a user share (/mnt/user*)
-    // and a physical disk or pool can lose data. also flag any move that crosses
-    // filesystems, since it becomes a copy then a delete. returns a message or null.
     private static function crossMountWarn(array $sources, string $dest, string $op): ?string
     {
         $destMount = self::mountRoot($dest);
@@ -1782,7 +1862,6 @@ final class FilesViewerEndpoint
         return (bool)preg_match('#^/mnt/user[0-9]*$#', $mount);
     }
 
-    // raise the cancel flag the worker checks between files and between chunks
     private static function opJobCancel(): array
     {
         $dir = self::jobDir((string)($_POST['id'] ?? ''));
@@ -1791,12 +1870,6 @@ final class FilesViewerEndpoint
         return ['ok' => true];
     }
 
-
-    // one chunk of a chunked upload. metadata rides on the query (the body is the
-    // raw chunk), so reads stay out of $_POST. chunks are appended to a hidden
-    // staging file inside the destination folder, so the final step is a same-fs
-    // rename, not a second full copy. the last chunk verifies the size and places
-    // the file, inheriting the folder owner, group and mode like a new file.
     private static function opUpload(): array
     {
         $meta = [
@@ -1810,8 +1883,6 @@ final class FilesViewerEndpoint
             'conflict' => (string)($_POST['conflict'] ?? 'rename'),
         ];
 
-        // the chunk rides base64 in a normal form field, the same plain post the
-        // rest of the webgui uses (proven path on unraid); decode it here
         $b64   = (string)($_POST['data'] ?? '');
         $bytes = $b64 === '' ? '' : base64_decode($b64, true);
         if ($bytes === false) return ['ok' => false, 'error' => 'bad chunk encoding'];
@@ -1834,9 +1905,6 @@ final class FilesViewerEndpoint
         $total  = (int)$m['total'];
         if ($offset < 0 || $total < 0) return ['ok' => false, 'error' => 'bad chunk'];
 
-        // folder uploads carry a relative subdir under the destination. validate each
-        // segment, create the missing levels on the first chunk (inheriting the
-        // destination owner), then confine with realpath so nothing climbs out
         $sub = (string)($m['subpath'] ?? '');
         if ($sub !== '') {
             $segs = self::safeSubSegments($sub);
@@ -1865,8 +1933,6 @@ final class FilesViewerEndpoint
 
         $part = $dir . '/.fvupload-' . $uid . '.part';
 
-        // a browser that dies mid upload leaves its staging file behind, so a new
-        // upload sweeps the ones nothing has touched for a day in this folder only
         if ($offset === 0) {
             foreach ((array)@glob($dir . '/.fvupload-*.part') as $old) {
                 $mt = @filemtime($old);
@@ -1876,7 +1942,6 @@ final class FilesViewerEndpoint
             }
         }
 
-        // the chunk must land exactly at the current staged size, in order
         clearstatcache(true, $part);
         $have = ($offset === 0) ? 0 : (int)@filesize($part);
         if ($offset !== $have)               { @unlink($part); return ['ok' => false, 'error' => 'chunk out of order']; }
@@ -1898,7 +1963,6 @@ final class FilesViewerEndpoint
         if (file_exists($target) || is_link($target)) {
             if ($conflict === 'skip')   { @unlink($part); return ['ok' => true, 'name' => $leaf, 'skipped' => true]; }
             if ($conflict === 'rename') { $target = self::freeNamePath($dir, $leaf); }
-            // overwrite: keep $target, the rename below replaces the old file
         }
         if (!@rename($part, $target)) {
             if (!@copy($part, $target)) { @unlink($part); return ['ok' => false, 'error' => 'could not save file']; }
@@ -1909,9 +1973,7 @@ final class FilesViewerEndpoint
         return ['ok' => true, 'name' => basename($target), 'done' => true];
     }
 
-    // split a folder upload's relative subpath into validated segments, or null if
-    // any segment is unsafe (".." or a name safeName rejects). keeps traversal out
-    private static function safeSubSegments(string $sub): ?array
+    public static function safeSubSegments(string $sub): ?array
     {
         $out = [];
         foreach (preg_split('#[\\\\/]+#', $sub) as $seg) {
@@ -1924,8 +1986,7 @@ final class FilesViewerEndpoint
         return $out;
     }
 
-    // first free "name (n).ext" in a folder, so an upload never clobbers a sibling
-    private static function freeNamePath(string $dir, string $base): string
+    public static function freeNamePath(string $dir, string $base): string
     {
         $dot  = strrpos($base, '.');
         $name = ($dot !== false && $dot > 0) ? substr($base, 0, $dot) : $base;
@@ -1937,7 +1998,6 @@ final class FilesViewerEndpoint
         return $dir . '/' . $name . ' (' . uniqid() . ')' . $ext;
     }
 
-    // drop the staging file when the user cancels mid-upload
     private static function opUploadCancel(): array
     {
         $uid = (string)($_POST['uid'] ?? $_GET['uid'] ?? '');
@@ -1947,11 +2007,10 @@ final class FilesViewerEndpoint
         return ['ok' => true];
     }
 
-
     public function run(): void
     {
         self::$obBase = ob_get_level();
-        ob_start();                       // trap any stray warning/notice; respond drops it
+        ob_start();
         self::$obOn = true;
         self::$responded = false;
         register_shutdown_function([self::class, 'shutdownGuard']);
@@ -1965,8 +2024,6 @@ final class FilesViewerEndpoint
             return;
         }
 
-        // action rides on the query (reads, and the write urls the js builds) or
-        // in the post body
         $action = (string)($_GET['action'] ?? $_POST['action'] ?? 'list');
 
         try {
@@ -1984,6 +2041,7 @@ final class FilesViewerEndpoint
                 case 'db_info':    self::respond(self::dbInfo((string)($_GET['path'] ?? '')));    return;
                 case 'db_rows':    self::respond(self::dbRows((string)($_GET['path'] ?? '')));    return;
                 case 'job_status': $this->jobStatusAction((string)($_GET['id'] ?? ''));             return;
+                case 'locate':     self::respond(self::locate((string)($_GET['path'] ?? '')));      return;
                 default:
                     self::respond(['ok' => false, 'error' => 'unknown action'], 400);
             }
@@ -1994,8 +2052,6 @@ final class FilesViewerEndpoint
         }
     }
 
-    // write dispatch. the gate (POST, the csrf check above, path confinement in
-    // the helpers) sits here, each case runs its own checks on top.
     private function runWrite(string $action): void
     {
         if (!self::requirePost()) { self::respond(['ok' => false, 'error' => 'POST required'], 405); return; }
@@ -2016,6 +2072,12 @@ final class FilesViewerEndpoint
             case 'upload':     self::respond(self::opUpload()); return;
             case 'upload_cancel': self::respond(self::opUploadCancel()); return;
             case 'fav_toggle':    self::respond(self::favToggle());     return;
+            case 'extract':       self::respond(self::opExtract());     return;
+            case 'compress':      self::respond(self::opCompress());    return;
+            case 'zip_info':      self::respond(self::zipInfo());       return;
+            case 'search_start':  self::respond(self::opSearchStart()); return;
+            case 'newperms':      self::respond(self::opNewPerms());    return;
+            case 'checksum_start': self::respond(self::opChecksumStart()); return;
 
             default:
                 self::respond(['ok' => false, 'error' => 'unknown action'], 400);
@@ -2023,7 +2085,6 @@ final class FilesViewerEndpoint
     }
 }
 
-// included by the pages to define the class; run only when called directly as the endpoint
 if (basename((string)($_SERVER['SCRIPT_FILENAME'] ?? '')) === 'filesviewer_api.php') {
     (new FilesViewerEndpoint())->run();
 }

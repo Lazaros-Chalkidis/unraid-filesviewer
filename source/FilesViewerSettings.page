@@ -13,8 +13,8 @@ require_once '/usr/local/emhttp/plugins/dynamix/include/Helpers.php';
 
 const FV_PLUGIN   = 'filesviewer';
 const FV_CFG_FILE = '/boot/config/plugins/filesviewer/filesviewer.cfg';
+if (function_exists('parse_plugin')) parse_plugin('filesviewer');
 
-// form sanitizers, every posted value gets clamped through one of these
 $yn = static fn($v, $d = '0') => ((string)($v ?? $d) === '1') ? '1' : '0';
 
 $one_of = static function($v, array $allowed, string $default): string {
@@ -22,25 +22,20 @@ $one_of = static function($v, array $allowed, string $default): string {
     return in_array($v, $allowed, true) ? $v : $default;
 };
 
-// the cfg lives on the flash, so an Apply that changes nothing must not cost a
-// write, and a real one goes through a temp file in the same folder and a rename
 $write_cfg = static function(string $ini): string {
     $dir = dirname(FV_CFG_FILE);
-    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return 'Settings were not saved: the folder on the flash drive could not be created.';
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true)) return _('Settings were not saved: the folder on the flash drive could not be created.');
     if (is_file(FV_CFG_FILE) && @file_get_contents(FV_CFG_FILE) === $ini) return '';
 
     $tmp = FV_CFG_FILE . '.tmp';
     if (@file_put_contents($tmp, $ini) !== strlen($ini) || !@rename($tmp, FV_CFG_FILE)) {
         @unlink($tmp);
-        return 'Settings were not saved. Check that the flash drive is mounted and writable.';
+        return _('Settings were not saved. Check that the flash drive is mounted and writable.');
     }
     @chmod(FV_CFG_FILE, 0644);
     return '';
 };
 
-// settings apply: rebuild the cfg from the posted fields, then write it back.
-// the csrf gate is dynamix local_prepend, which runs before any of this and drops
-// the request outright, so a POST getting this far has already been checked
 $save_err = '';
 
 if (isset($_POST['#apply'])) {
@@ -62,11 +57,14 @@ if (isset($_POST['#apply'])) {
     $new_cfg['FV_AUTOPLAY']      = $yn($_POST['FV_AUTOPLAY'] ?? '0', '0');
     $new_cfg['FV_RECYCLE']       = $yn($_POST['FV_RECYCLE'] ?? '0', '0');
     $new_cfg['FV_RECYCLE_DAYS']  = $one_of($_POST['FV_RECYCLE_DAYS'] ?? '30', ['30','60','never'], '30');
+    $new_cfg['FV_EDIT_DEFAULT']  = $yn($_POST['FV_EDIT_DEFAULT'] ?? '0', '0');
+    $new_cfg['FV_PALETTE']       = $one_of($_POST['FV_PALETTE'] ?? 'auto', ['auto','dark','light'], 'auto');
+    $new_cfg['FV_NOTIFY']        = $yn($_POST['FV_NOTIFY'] ?? '1', '1');
 
     $ini = '';
     foreach ($new_cfg as $k => $v) {
-        $v = preg_replace('/[\x00-\x1f\x7f]/', '', (string)$v);  // strip control chars
-        $v = str_replace('"', '\\"', $v);                        // escape quotes so the ini cannot be broken out of
+        $v = preg_replace('/[\x00-\x1f\x7f]/', '', (string)$v);
+        $v = str_replace('"', '\\"', $v);
         $ini .= "{$k}=\"{$v}\"\n";
     }
     $save_err = $write_cfg($ini);
@@ -92,18 +90,24 @@ $def = [
     'FV_AUTOPLAY'      => '0',
     'FV_RECYCLE'       => '0',
     'FV_RECYCLE_DAYS'  => '30',
+    'FV_EDIT_DEFAULT'  => '0',
+    'FV_PALETTE'       => 'auto',
+    'FV_NOTIFY'        => '1',
 ];
 $cfg += $def;
 
 $dynamix_cfg  = @parse_ini_file('/boot/config/plugins/dynamix/dynamix.cfg', true);
 $unraid_theme = $dynamix_cfg['display']['theme'] ?? '';
+if ($cfg['FV_PALETTE'] === 'dark')  $unraid_theme = 'black';
+if ($cfg['FV_PALETTE'] === 'light') $unraid_theme = 'white';
 $fv_theme     = in_array($unraid_theme, ['black','white','azure','gray'], true) ? $unraid_theme : 'black';
 $fv_light     = in_array($fv_theme, ['white','azure'], true);
 $themeClass   = ' fv-theme-' . $fv_theme;
 $lightClass   = $fv_light ? ' fv-light' : '';
 $rootClasses  = $themeClass . $lightClass;
+$fv_lang      = substr((string)($locale ?? ($_SESSION['locale'] ?? '')), 0, 2);
+$langAttr     = $fv_lang !== '' ? ' lang="' . htmlspecialchars($fv_lang, ENT_QUOTES) . '"' : '';
 
-// show the running build, falling back to the .plg metadata and then a label
 $plugin_version = '';
 $_pvFile = '/usr/local/emhttp/plugins/filesviewer/VERSION';
 if (is_readable($_pvFile)) {
@@ -118,18 +122,18 @@ if ($plugin_version === '') {
 }
 if ($plugin_version === '') $plugin_version = 'dev';
 
-// numeric array keys arrive as int, so both sides are compared as text
 $sel = static fn($a, $b) => ((string)$a === (string)$b) ? ' selected' : '';
 ?>
 
 <link rel="stylesheet" type="text/css" href="/plugins/filesviewer/css/settings.css?v=<?= rawurlencode($plugin_version) ?>">
-<script>/* firefox paints the markup below before the sheet above arrives. a script
-after a stylesheet has to wait for it, which holds the parser and stops the flash. */</script>
+<script></script>
 
-<form name="filesviewer_settings" method="post" class="filesviewer-settings<?= $rootClasses ?>" autocomplete="off">
+<form name="filesviewer_settings" method="post" class="filesviewer-settings<?= $rootClasses ?>"<?= $langAttr ?> autocomplete="off">
 
 <?php
-$toggle = function($name, $val, $default = '1', $onLabel = 'Enabled', $offLabel = 'Disabled') {
+$toggle = function($name, $val, $default = '1', $onLabel = null, $offLabel = null) {
+    $onLabel  = $onLabel  ?? _('Enabled');
+    $offLabel = $offLabel ?? _('Disabled');
     $isOn = ((string)($val ?? $default)) === '1';
     return '<input type="hidden" name="' . $name . '" value="' . ($isOn ? '1' : '0') . '">'
         . '<label class="fv-toggle"><input type="checkbox" data-fv-toggle="' . $name . '"' . ($isOn ? ' checked' : '') . '>'
@@ -140,15 +144,15 @@ $toggle = function($name, $val, $default = '1', $onLabel = 'Enabled', $offLabel 
         . ($isOn ? $onLabel : $offLabel) . '</span>';
 };
 $toggleShow = function($name, $val, $default = '1') use ($toggle) {
-    return $toggle($name, $val, $default, 'Show', 'Hide');
+    return $toggle($name, $val, $default, _('Show'), _('Hide'));
 };
 ?>
 
 <div class="fv-page-head">
   <img src="/plugins/filesviewer/img/filesviewer.png" class="fv-page-head__icon" alt="">
   <div>
-    <div class="fv-page-head__title">Files Viewer<span class="fv-page-head__suite">part of VIEWERS Suite</span></div>
-    <div class="fv-page-head__desc">A file browser for your Unraid shares and disks</div>
+    <div class="fv-page-head__title">Files Viewer<span class="fv-page-head__suite"><?=_('part of VIEWERS Suite')?></span></div>
+    <div class="fv-page-head__desc"><?=_('A file browser for your Unraid shares and disks')?></div>
   </div>
 </div>
 
@@ -156,33 +160,41 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
   <div class="fv-sec" id="fvSecBrowsing">
     <div class="fv-sec-hd">
-      <span>Browsing</span>
-      <span class="fv-pill">Where Files Viewer can look</span>
+      <span><?=_('Browsing')?></span>
+      <span class="fv-pill"><?=_('Where Files Viewer can look')?></span>
       <span class="fv-sec-arrow">&#9650;</span>
     </div>
     <div class="fv-sec-bd">
 
       <div class="fv-r">
-        <div class="fv-r-label">Show hidden files</div>
+        <div class="fv-r-label"><?=_('Show hidden files')?></div>
         <div class="fv-r-field">
           <?= $toggleShow('FV_SHOW_HIDDEN', $cfg['FV_SHOW_HIDDEN'], '0') ?>
-          <span class="fv-r-desc">Include dotfiles and dot-folders in the listing</span>
+          <span class="fv-r-desc"><?=_('Include dotfiles and dot-folders in the listing')?></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Folders first</div>
+        <div class="fv-r-label"><?=_('Folders first')?></div>
         <div class="fv-r-field">
-          <?= $toggle('FV_FOLDERS_FIRST', $cfg['FV_FOLDERS_FIRST'], '1', 'On', 'Off') ?>
-          <span class="fv-r-desc">List folders above files regardless of sort order</span>
+          <?= $toggle('FV_FOLDERS_FIRST', $cfg['FV_FOLDERS_FIRST'], '1', _('On'), _('Off')) ?>
+          <span class="fv-r-desc"><?=_('List folders above files regardless of sort order')?></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Remember last folder</div>
+        <div class="fv-r-label"><?=_('Remember last folder')?></div>
         <div class="fv-r-field">
-          <?= $toggle('FV_REMEMBER', $cfg['FV_REMEMBER'], '1', 'On', 'Off') ?>
-          <span class="fv-r-desc">Reopen the tool at the folder you were last browsing</span>
+          <?= $toggle('FV_REMEMBER', $cfg['FV_REMEMBER'], '1', _('On'), _('Off')) ?>
+          <span class="fv-r-desc"><?=_('Reopen the tool at the folder you were last browsing')?></span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label"><?=_('Open in')?></div>
+        <div class="fv-r-field">
+          <?= $toggle('FV_EDIT_DEFAULT', $cfg['FV_EDIT_DEFAULT'], '0', _('Editing'), _('Preview only')) ?>
+          <span class="fv-r-desc"><?=_('Editing opens the tool with the write actions already live. Preview only keeps them behind the pencil at the top right until you click it')?></span>
         </div>
       </div>
 
@@ -191,43 +203,43 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
   <div class="fv-sec closed" id="fvSecSorting">
     <div class="fv-sec-hd">
-      <span>Sorting</span>
-      <span class="fv-pill">Default order of the listing</span>
+      <span><?=_('Sorting')?></span>
+      <span class="fv-pill"><?=_('Default order of the listing')?></span>
       <span class="fv-sec-arrow">&#9650;</span>
     </div>
     <div class="fv-sec-bd">
 
       <div class="fv-r">
-        <div class="fv-r-label">Sort by</div>
+        <div class="fv-r-label"><?=_('Sort by')?></div>
         <div class="fv-r-field">
           <select name="FV_SORT" class="fv-select">
-            <option value="name"<?= $sel($cfg['FV_SORT'], 'name') ?>>Name - Default</option>
-            <option value="size"<?= $sel($cfg['FV_SORT'], 'size') ?>>Size</option>
-            <option value="modified"<?= $sel($cfg['FV_SORT'], 'modified') ?>>Modified</option>
+            <option value="name"<?= $sel($cfg['FV_SORT'], 'name') ?>><?=_('Name - Default')?></option>
+            <option value="size"<?= $sel($cfg['FV_SORT'], 'size') ?>><?=_('Size')?></option>
+            <option value="modified"<?= $sel($cfg['FV_SORT'], 'modified') ?>><?=_('Modified')?></option>
           </select>
-          <span class="fv-r-desc">Which field decides the order of entries</span>
+          <span class="fv-r-desc"><?=_('Which field decides the order of entries. Clicking a column header in the table view overrides this for that browser')?></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Direction</div>
+        <div class="fv-r-label"><?=_('Direction')?></div>
         <div class="fv-r-field">
           <select name="FV_SORT_DIR" class="fv-select">
-            <option value="asc"<?= $sel($cfg['FV_SORT_DIR'], 'asc') ?>>Ascending - Default</option>
-            <option value="desc"<?= $sel($cfg['FV_SORT_DIR'], 'desc') ?>>Descending</option>
+            <option value="asc"<?= $sel($cfg['FV_SORT_DIR'], 'asc') ?>><?=_('Ascending - Default')?></option>
+            <option value="desc"<?= $sel($cfg['FV_SORT_DIR'], 'desc') ?>><?=_('Descending')?></option>
           </select>
-          <span class="fv-r-desc">Ascending or descending order</span>
+          <span class="fv-r-desc"><?=_('Ascending or descending order')?></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Permissions format</div>
+        <div class="fv-r-label"><?=_('Permissions format')?></div>
         <div class="fv-r-field">
           <select name="FV_PERMS_FORMAT" class="fv-select">
-            <option value="octal"<?= $sel($cfg['FV_PERMS_FORMAT'], 'octal') ?>>Octal - 750</option>
-            <option value="symbolic"<?= $sel($cfg['FV_PERMS_FORMAT'], 'symbolic') ?>>Symbolic - drwxr-xr-x</option>
+            <option value="octal"<?= $sel($cfg['FV_PERMS_FORMAT'], 'octal') ?>><?=_('Octal - 750')?></option>
+            <option value="symbolic"<?= $sel($cfg['FV_PERMS_FORMAT'], 'symbolic') ?>><?=_('Symbolic - drwxr-xr-x')?></option>
           </select>
-          <span class="fv-r-desc">How permissions are shown in the listing and the file card</span>
+          <span class="fv-r-desc"><?=_('How permissions are shown in the listing and the file card')?></span>
         </div>
       </div>
 
@@ -236,17 +248,29 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
   <div class="fv-sec closed" id="fvSecAppearance">
     <div class="fv-sec-hd">
-      <span>Appearance</span>
-      <span class="fv-pill">How the tool page looks</span>
+      <span><?=_('Appearance')?></span>
+      <span class="fv-pill"><?=_('How the tool page looks')?></span>
       <span class="fv-sec-arrow">&#9650;</span>
     </div>
     <div class="fv-sec-bd">
 
       <div class="fv-r">
-        <div class="fv-r-label">Action buttons</div>
+        <div class="fv-r-label"><?=_('Action buttons')?></div>
         <div class="fv-r-field">
-          <?= $toggle('FV_BTN_COLORS', $cfg['FV_BTN_COLORS'], '1', 'Coloured', 'Plain') ?>
-          <span class="fv-r-desc">Coloured keeps a different colour for each button in the bar. Plain drops the colours and leaves them all looking the same. Delete and Recycle Bin stay coloured either way</span>
+          <?= $toggle('FV_BTN_COLORS', $cfg['FV_BTN_COLORS'], '1', _('Coloured'), _('Plain')) ?>
+          <span class="fv-r-desc"><?=_('Coloured keeps a different colour for each button in the bar. Plain drops the colours and leaves them all looking the same. Delete and Recycle Bin stay coloured either way')?></span>
+        </div>
+      </div>
+
+      <div class="fv-r">
+        <div class="fv-r-label"><?=_('Palette')?></div>
+        <div class="fv-r-field">
+          <select name="FV_PALETTE" class="fv-select">
+            <option value="auto"<?= $sel($cfg['FV_PALETTE'], 'auto') ?>><?=_('Follow the Unraid theme')?></option>
+            <option value="dark"<?= $sel($cfg['FV_PALETTE'], 'dark') ?>><?=_('Dark')?></option>
+            <option value="light"<?= $sel($cfg['FV_PALETTE'], 'light') ?>><?=_('Light')?></option>
+          </select>
+          <span class="fv-r-desc"><?=_('The plugin follows the theme chosen in Display Settings. A custom theme changes how the page looks without changing that setting, so pick Dark or Light to match what you actually see')?></span>
         </div>
       </div>
 
@@ -255,56 +279,56 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
   <div class="fv-sec closed" id="fvSecPreview">
     <div class="fv-sec-hd">
-      <span>Preview</span>
-      <span class="fv-pill">Inline preview limits</span>
+      <span><?=_('Preview')?></span>
+      <span class="fv-pill"><?=_('Inline preview limits')?></span>
       <span class="fv-sec-arrow">&#9650;</span>
     </div>
     <div class="fv-sec-bd">
 
       <div class="fv-r">
-        <div class="fv-r-label">Render markdown</div>
+        <div class="fv-r-label"><?=_('Render markdown')?></div>
         <div class="fv-r-field">
-          <?= $toggle('FV_MD_RENDER', $cfg['FV_MD_RENDER'], '1', 'Rendered', 'Source') ?>
-          <span class="fv-r-desc">Show .md files formatted. Off shows the raw source with highlighting</span>
+          <?= $toggle('FV_MD_RENDER', $cfg['FV_MD_RENDER'], '1', _('Rendered'), _('Source')) ?>
+          <span class="fv-r-desc"><?=_('Show .md files formatted. Off shows the raw source with highlighting')?></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Text preview limit</div>
+        <div class="fv-r-label"><?=_('Text preview limit')?></div>
         <div class="fv-r-field">
-          <?php $capLabels = ['256'=>'256 KB','512'=>'512 KB','1024'=>'1 MB','2048'=>'2 MB - Default','5120'=>'5 MB','10240'=>'10 MB']; ?>
+          <?php $capLabels = ['256'=>'256 KB','512'=>'512 KB','1024'=>'1 MB','2048'=>'2 MB - ' . _('Default'),'5120'=>'5 MB','10240'=>'10 MB']; ?>
           <select name="FV_TEXT_CAP_KB" class="fv-select">
             <?php foreach ($capLabels as $kb => $lbl): ?>
               <option value="<?= $kb ?>"<?= $sel((string)$cfg['FV_TEXT_CAP_KB'], $kb) ?>><?= $lbl ?></option>
             <?php endforeach; ?>
           </select>
-          <span class="fv-r-desc">How much of a text or code file to load. Larger files show the first part only. Editing always stops at 2 MB, whatever this is set to</span>
+          <span class="fv-r-desc"><?=_('How much of a text or code file to load. Larger files show the first part only. Editing always stops at 2 MB, whatever this is set to')?></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Inline image limit</div>
+        <div class="fv-r-label"><?=_('Inline image limit')?></div>
         <div class="fv-r-field">
-          <?php $imgLabels = ['10'=>'10 MB','25'=>'25 MB','50'=>'50 MB - Default','100'=>'100 MB','250'=>'250 MB']; ?>
+          <?php $imgLabels = ['10'=>'10 MB','25'=>'25 MB','50'=>'50 MB - ' . _('Default'),'100'=>'100 MB','250'=>'250 MB']; ?>
           <select name="FV_IMG_MAX_MB" class="fv-select">
             <?php foreach ($imgLabels as $mb => $lbl): ?>
               <option value="<?= $mb ?>"<?= $sel((string)$cfg['FV_IMG_MAX_MB'], $mb) ?>><?= $lbl ?></option>
             <?php endforeach; ?>
           </select>
-          <span class="fv-r-desc">Images larger than this show their details instead of loading inline</span>
+          <span class="fv-r-desc"><?=_('Images larger than this show their details instead of loading inline')?></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Archive listing limit</div>
+        <div class="fv-r-label"><?=_('Archive listing limit')?></div>
         <div class="fv-r-field">
-          <?php $archLabels = ['200'=>'200 entries','500'=>'500 entries','1000'=>'1000 entries - Default','2500'=>'2500 entries','5000'=>'5000 entries']; ?>
+          <?php $archLabels = ['200'=>sprintf(_('%s entries'), 200),'500'=>sprintf(_('%s entries'), 500),'1000'=>sprintf(_('%s entries'), 1000) . ' - ' . _('Default'),'2500'=>sprintf(_('%s entries'), 2500),'5000'=>sprintf(_('%s entries'), 5000)]; ?>
           <select name="FV_ARCHIVE_MAX" class="fv-select">
             <?php foreach ($archLabels as $n => $lbl): ?>
               <option value="<?= $n ?>"<?= $sel((string)$cfg['FV_ARCHIVE_MAX'], $n) ?>><?= $lbl ?></option>
             <?php endforeach; ?>
           </select>
-          <span class="fv-r-desc">Maximum number of entries listed inside an archive</span>
+          <span class="fv-r-desc"><?=_('Maximum number of entries listed inside an archive')?></span>
         </div>
       </div>
 
@@ -313,17 +337,17 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
   <div class="fv-sec closed" id="fvSecMedia">
     <div class="fv-sec-hd">
-      <span>Media</span>
-      <span class="fv-pill">Playback</span>
+      <span><?=_('Media')?></span>
+      <span class="fv-pill"><?=_('Playback')?></span>
       <span class="fv-sec-arrow">&#9650;</span>
     </div>
     <div class="fv-sec-bd">
 
       <div class="fv-r">
-        <div class="fv-r-label">Autoplay media</div>
+        <div class="fv-r-label"><?=_('Autoplay media')?></div>
         <div class="fv-r-field">
-          <?= $toggle('FV_AUTOPLAY', $cfg['FV_AUTOPLAY'], '0', 'On', 'Off') ?>
-          <span class="fv-r-desc">Start audio and video automatically when opened. Off is recommended</span>
+          <?= $toggle('FV_AUTOPLAY', $cfg['FV_AUTOPLAY'], '0', _('On'), _('Off')) ?>
+          <span class="fv-r-desc"><?=_('Start audio and video automatically when opened. Off is recommended')?></span>
         </div>
       </div>
 
@@ -332,17 +356,36 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
   <div class="fv-sec closed" id="fvSecSpace">
     <div class="fv-sec-hd">
-      <span>Space analysis</span>
-      <span class="fv-pill">Folder size scanning</span>
+      <span><?=_('Space analysis')?></span>
+      <span class="fv-pill"><?=_('Folder size scanning')?></span>
       <span class="fv-sec-arrow">&#9650;</span>
     </div>
     <div class="fv-sec-bd">
 
       <div class="fv-r">
-        <div class="fv-r-label">Space button</div>
+        <div class="fv-r-label"><?=_('Space button')?></div>
         <div class="fv-r-field">
-          <?= $toggle('FV_SPACE', $cfg['FV_SPACE'], '0', 'Shown', 'Hidden') ?>
-          <span class="fv-r-desc fv-r-desc--warn"><i class="fa fa-info-circle" aria-hidden="true"></i>Shows the Space button in the bar. It reads every file under the folder you point it at, which on a share with hundreds of thousands of files <b>runs for many minutes</b></span>
+          <?= $toggle('FV_SPACE', $cfg['FV_SPACE'], '0', _('Shown'), _('Hidden')) ?>
+          <span class="fv-r-desc fv-r-desc--warn"><i class="fa fa-info-circle" aria-hidden="true"></i><span><?=_('Shows the Space button in the bar. It reads every file under the folder you point it at, which on a share with hundreds of thousands of files <b>runs for many minutes</b>')?></span></span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="fv-sec closed" id="fvSecNotify">
+    <div class="fv-sec-hd">
+      <span><?=_('Notifications')?></span>
+      <span class="fv-pill"><?=_('Long running jobs')?></span>
+      <span class="fv-sec-arrow">&#9650;</span>
+    </div>
+    <div class="fv-sec-bd">
+
+      <div class="fv-r">
+        <div class="fv-r-label"><?=_('Job notifications')?></div>
+        <div class="fv-r-field">
+          <?= $toggle('FV_NOTIFY', $cfg['FV_NOTIFY'], '1', _('On'), _('Off')) ?>
+          <span class="fv-r-desc"><?=_('Sends an Unraid notification when a copy, move, extract, compress or checksum runs longer than a minute, so you can leave the page and still learn how it ended')?></span>
         </div>
       </div>
 
@@ -351,29 +394,29 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
   <div class="fv-sec closed" id="fvSecRecycle">
     <div class="fv-sec-hd">
-      <span>Recycle bin</span>
-      <span class="fv-pill">Safety net for deletes</span>
+      <span><?=_('Recycle bin')?></span>
+      <span class="fv-pill"><?=_('Safety net for deletes')?></span>
       <span class="fv-sec-arrow">&#9650;</span>
     </div>
     <div class="fv-sec-bd">
 
       <div class="fv-r">
-        <div class="fv-r-label">Recycle bin</div>
+        <div class="fv-r-label"><?=_('Recycle bin')?></div>
         <div class="fv-r-field">
-          <?= $toggle('FV_RECYCLE', $cfg['FV_RECYCLE'], '0', 'On', 'Off') ?>
-          <span class="fv-r-desc fv-r-desc--warn"><i class="fa fa-info-circle" aria-hidden="true"></i>Deletes made in Files Viewer move to a per share recycle bin. <b>Deletions over SMB or by other tools are not covered.</b> Off deletes permanently</span>
+          <?= $toggle('FV_RECYCLE', $cfg['FV_RECYCLE'], '0', _('On'), _('Off')) ?>
+          <span class="fv-r-desc fv-r-desc--warn"><i class="fa fa-info-circle" aria-hidden="true"></i><span><?=_('Deletes made in Files Viewer move to a per share recycle bin. <b>Deletions over SMB or by other tools are not covered.</b> Off deletes permanently')?></span></span>
         </div>
       </div>
 
       <div class="fv-r">
-        <div class="fv-r-label">Auto empty</div>
+        <div class="fv-r-label"><?=_('Auto empty')?></div>
         <div class="fv-r-field">
           <select name="FV_RECYCLE_DAYS" class="fv-select">
-            <option value="30"<?= $sel($cfg['FV_RECYCLE_DAYS'], '30') ?>>After 30 days - Default</option>
-            <option value="60"<?= $sel($cfg['FV_RECYCLE_DAYS'], '60') ?>>After 60 days</option>
-            <option value="never"<?= $sel($cfg['FV_RECYCLE_DAYS'], 'never') ?>>Never</option>
+            <option value="30"<?= $sel($cfg['FV_RECYCLE_DAYS'], '30') ?>><?=_('After 30 days - Default')?></option>
+            <option value="60"<?= $sel($cfg['FV_RECYCLE_DAYS'], '60') ?>><?=_('After 60 days')?></option>
+            <option value="never"<?= $sel($cfg['FV_RECYCLE_DAYS'], 'never') ?>><?=_('Never')?></option>
           </select>
-          <span class="fv-r-desc">Items older than this are removed from the recycle bin automatically. Never keeps them until you empty the bin yourself</span>
+          <span class="fv-r-desc"><?=_('Items older than this are removed from the recycle bin automatically. Never keeps them until you empty the bin yourself')?></span>
         </div>
       </div>
 
@@ -385,14 +428,14 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
   <?php endif; ?>
 
   <div class="fv-actions-bar">
-    <button type="submit" name="#apply" value="apply" id="fvApplyBtn" class="fv-action-btn fv-action-btn--apply" title="Save settings">
-      <i class="fa fa-check" aria-hidden="true"></i> Apply
+    <button type="submit" name="#apply" value="apply" id="fvApplyBtn" class="fv-action-btn fv-action-btn--apply" title="<?=_('Save settings')?>">
+      <i class="fa fa-check" aria-hidden="true"></i> <?=_('Apply')?>
     </button>
-    <button type="button" id="fvResetBtn" class="fv-action-btn fv-action-btn--reset" title="Reset to defaults">
-      <i class="fa fa-undo" aria-hidden="true"></i> Reset to Defaults
+    <button type="button" id="fvResetBtn" class="fv-action-btn fv-action-btn--reset" title="<?=_('Reset to defaults')?>">
+      <i class="fa fa-undo" aria-hidden="true"></i> <?=_('Reset to Defaults')?>
     </button>
-    <button type="button" class="fv-action-btn fv-action-btn--done" onclick="done()" title="Return to the previous page">
-      <i class="fa fa-arrow-left" aria-hidden="true"></i> Done
+    <button type="button" class="fv-action-btn fv-action-btn--done" onclick="done()" title="<?=_('Return to the previous page')?>">
+      <i class="fa fa-arrow-left" aria-hidden="true"></i> <?=_('Done')?>
     </button>
   </div>
 
@@ -402,18 +445,18 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
   <div class="fv-footer-links">
     <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues"
        class="fv-footer-link"
-       target="_blank" rel="noopener">Support</a>
+       target="_blank" rel="noopener"><?=_('Support')?></a>
     <span class="fv-footer-sep" aria-hidden="true"></span>
     <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/blob/main/GUIDE.md"
        class="fv-footer-link"
-       target="_blank" rel="noopener">Guide</a>
+       target="_blank" rel="noopener"><?=_('Guide')?></a>
     <span class="fv-footer-sep" aria-hidden="true"></span>
-    <a href="#" id="fvCreditsLink" class="fv-footer-link">Credits</a>
+    <a href="#" id="fvCreditsLink" class="fv-footer-link"><?=_('Credits')?></a>
   </div>
   <span class="fv-version-badge">v<?= htmlspecialchars((string)$plugin_version) ?></span>
 </div>
 
-<div id="fvCreditsModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
+<div id="fvCreditsModal"<?= $langAttr ?> style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
   <div class="fv-credits-modal-box fv-credits-modal-v2">
     <div class="fv-credits-grid">
 
@@ -423,21 +466,31 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
           <img src="/plugins/filesviewer/img/avatar.png" alt="Lazaros Chalkidis" class="fv-credits-avatar">
         </div>
         <div class="fv-credits-name">Lazaros Chalkidis</div>
-        <div class="fv-credits-role">Author</div>
+        <div class="fv-credits-role"><?=_('Author')?></div>
+        <div class="fv-credits-contrib">
+          <div class="fv-credits-contrib-av">
+            <img src="/plugins/filesviewer/img/sebastian-oehm.png" alt="Sebastian Oehm" class="fv-credits-avatar">
+          </div>
+          <div class="fv-credits-name">
+            <a href="https://github.com/SebastianOehm" target="_blank" rel="noopener">Sebastian Oehm</a>
+          </div>
+          <div class="fv-credits-role"><?=_('Contributor')?></div>
+          <div class="fv-credits-contrib-what"><?=_('Toolbar overflow fix')?></div>
+        </div>
       </div>
 
       <div class="fv-credits-right">
         <div class="fv-credits-title-row">
           <span class="fv-credits-title">Files Viewer</span>
-          <span class="fv-credits-suite">part of VIEWERS Suite</span>
+          <span class="fv-credits-suite"><?=_('part of VIEWERS Suite')?></span>
         </div>
-        <div class="fv-credits-desc">A file browser and manager for your Unraid shares and disks, with inline previews and a per-share recycle bin.</div>
+        <div class="fv-credits-desc"><?=_('A file browser and manager for your Unraid shares and disks, with inline previews and a per-share recycle bin.')?></div>
         <div class="fv-credits-links">
           <a href="https://github.com/Lazaros-Chalkidis" target="_blank" rel="noopener" class="fv-credits-link">
-            <i class="fa fa-github"></i><span>GitHub Profile</span><i class="fa fa-external-link fv-credits-link-ext"></i>
+            <i class="fa fa-github"></i><span><?=_('GitHub Profile')?></span><i class="fa fa-external-link fv-credits-link-ext"></i>
           </a>
           <a href="https://github.com/Lazaros-Chalkidis/unraid-filesviewer/issues" target="_blank" rel="noopener" class="fv-credits-link">
-            <i class="fa fa-exclamation-circle"></i><span>Support</span><i class="fa fa-external-link fv-credits-link-ext"></i>
+            <i class="fa fa-exclamation-circle"></i><span><?=_('Support')?></span><i class="fa fa-external-link fv-credits-link-ext"></i>
           </a>
         </div>
       </div>
@@ -452,7 +505,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
   </div>
 </div>
 
-<div id="fvNoticeModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
+<div id="fvNoticeModal"<?= $langAttr ?> style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.72);align-items:center;justify-content:center;">
   <div class="fv-credits-modal-box" style="max-width:420px;">
     <div style="padding:1.8rem 2.2rem 1.4rem;text-align:center;flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;">
 
@@ -461,7 +514,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
           <polyline points="5 12 10 17 19 8"></polyline>
         </svg>
       </div>
-      <div id="fvNoticeTitle" style="font-size:1.2em;font-weight:700;color:#fff;margin-bottom:0.6rem;">Notice</div>
+      <div id="fvNoticeTitle" style="font-size:1.2em;font-weight:700;color:#fff;margin-bottom:0.6rem;"><?=_('Notice')?></div>
       <div id="fvNoticeBody" style="font-size:0.95em;line-height:1.55;opacity:0.75;"></div>
     </div>
     <div class="fv-credits-footer" style="justify-content:center;">
@@ -476,14 +529,12 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 (function () {
     'use strict';
 
-    // collapsible sections
     document.querySelectorAll('.fv-sec-hd').forEach(function (hd) {
         hd.addEventListener('click', function () {
             hd.parentElement.classList.toggle('closed');
         });
     });
 
-    // mirror each toggle's checkbox into its hidden input and swap the label
     document.querySelectorAll('input[data-fv-toggle]').forEach(function (cb) {
         cb.addEventListener('change', function () {
             var name   = cb.getAttribute('data-fv-toggle');
@@ -499,19 +550,17 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
         });
     });
 
-    // let the normal POST fire, then show the button as saving
     var form     = document.querySelector('form[name="filesviewer_settings"]');
     var applyBtn = document.getElementById('fvApplyBtn');
     if (form && applyBtn) {
         form.addEventListener('submit', function () {
             setTimeout(function () {
                 applyBtn.disabled  = true;
-                applyBtn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> Saving\u2026';
+                applyBtn.innerHTML = '<i class="fa fa-spinner fa-spin" aria-hidden="true"></i> ' + _('Saving') + '\u2026';
             }, 0);
         });
     }
 
-    // reset to defaults: restore the fields, then ask the user to Apply
     var FV_DEFAULTS = {
         FV_SHOW_HIDDEN:   '0',
         FV_FOLDERS_FIRST: '1',
@@ -527,7 +576,10 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
         FV_ARCHIVE_MAX:   '1000',
         FV_AUTOPLAY:      '0',
         FV_RECYCLE:       '0',
-        FV_RECYCLE_DAYS:  '30'
+        FV_RECYCLE_DAYS:  '30',
+        FV_EDIT_DEFAULT:  '0',
+        FV_PALETTE:       'auto',
+        FV_NOTIFY:        '1'
     };
 
     function resetDefaults() {
@@ -535,7 +587,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
 
         Object.keys(FV_DEFAULTS).forEach(function (k) {
             var el = form.querySelector('[name="' + k + '"]');
-            if (el && el.tagName !== 'INPUT') el.value = FV_DEFAULTS[k];   // textarea and selects
+            if (el && el.tagName !== 'INPUT') el.value = FV_DEFAULTS[k];
             else if (el && el.type !== 'checkbox' && el.type !== 'hidden') el.value = FV_DEFAULTS[k];
         });
 
@@ -553,15 +605,14 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
             }
         });
 
-        fvShowNotice('Settings reset',
-            'The settings have been restored to their default values. Click '
-            + '<span style="color:#f47d42;font-weight:600;">Apply</span> to save.');
+        fvShowNotice(_('Settings reset'),
+            _('The settings have been restored to their default values. Click %s to save.')
+                .replace('%s', '<span style="color:#f47d42;font-weight:600;">' + _('Apply') + '</span>'));
     }
 
     var resetBtn = document.getElementById('fvResetBtn');
     if (resetBtn) resetBtn.addEventListener('click', resetDefaults);
 
-    // notice modal
     function fvShowNotice(title, bodyHtml) {
         var nModal = document.getElementById('fvNoticeModal');
         var nTitle = document.getElementById('fvNoticeTitle');
@@ -571,7 +622,7 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
             alert(title + (plain ? '\n\n' + plain : ''));
             return;
         }
-        nTitle.textContent = title || 'Notice';
+        nTitle.textContent = title || _('Notice');
         nBody.innerHTML    = bodyHtml || '';
         nModal.style.display = 'flex';
     }
@@ -585,7 +636,6 @@ $toggleShow = function($name, $val, $default = '1') use ($toggle) {
         });
     }
 
-    // credits modal
     var modal = document.getElementById('fvCreditsModal');
     var cLink = document.getElementById('fvCreditsLink');
     var okBtn = document.getElementById('fvCreditsOkBtn');

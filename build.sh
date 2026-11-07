@@ -1,42 +1,28 @@
 #!/bin/bash
-# FILES VIEWER - build.sh
-# Copyright (C) 2026 Lazaros Chalkidis - License: GPLv3
-# Packages the plugin source into a .txz and generates the .plg file.
-#
-# Usage:
-#   ./build.sh                        release build (today's date, main branch)
-#   ./build.sh a                      versioned suffix: 2026.01.15a
-#   ./build.sh a dev                  dev build (dev branch)
-#   ./build.sh "" local               local build (embeds .txz in .plg, no URL)
-#   ./build.sh a dev local            dev + local
-#
-# Output:
-#   packages/filesviewer-<version>.txz
-#   filesviewer.plg
+# ============================================================================
+# FILES VIEWER
+# Copyright (C) 2026 Lazaros Chalkidis
+# License: GPLv3
+# =========================================================================
 
-# Configuration
 PLUGIN_NAME="filesviewer"
 AUTHOR="Lazaros Chalkidis"
 GITHUB_USER="Lazaros-Chalkidis"
 GIT_URL="https://github.com/Lazaros-Chalkidis/unraid-filesviewer"
-# CA requires the plg pluginURL to match the template PluginURL character for character
 RAW_URL="${GIT_URL/github.com/raw.githubusercontent.com}"
 PACKAGE_DIR_FINAL="packages"
 PACKAGE_DIR_TEMP="package-temp"
 
-# Versioning
 BASE_VERSION=$(date +'%Y.%m.%d')
 LETTER_SUFFIX="${1}"
 STAGE_INPUT="${2}"
 LOCAL_INSTALL="${3:-}"
 
-# Accept "local" as either the 2nd or 3rd positional so both documented forms work
 if [[ "$STAGE_INPUT" == "local" ]]; then
     LOCAL_INSTALL="local"
     STAGE_INPUT=""
 fi
 
-# the version becomes an XML entity in the plg, so nothing arbitrary gets in
 if [[ ! "$LETTER_SUFFIX" =~ ^[a-z]?$ ]]; then
     echo "Version suffix must be a single lowercase letter."
     exit 1
@@ -56,7 +42,6 @@ if [[ -n "$STAGE_INPUT" && "$STAGE_INPUT" != "release" ]]; then
 fi
 VERSION="${BASE_VERSION}${LETTER_SUFFIX}${STAGE_SUFFIX}"
 
-# Branch and URL
 if [[ "$LOCAL_INSTALL" == "local" ]]; then
     BRANCH="local"
     PLUGIN_URL_STRUCTURE=""
@@ -71,7 +56,6 @@ else
     CHANGES_TEXT="- Automated release build."
 fi
 
-# Changelog
 CHANGELOG_MD_FILE="CHANGELOG.md"
 if [[ -f "$CHANGELOG_MD_FILE" ]]; then
     CHANGES_BLOCK="$(cat "$CHANGELOG_MD_FILE")"
@@ -80,21 +64,17 @@ else
 ${CHANGES_TEXT}"
 fi
 
-# a ]]> here closes the CDATA and whatever follows becomes plg markup that Unraid
-# runs as root on every machine that installs
 if [[ "$CHANGES_BLOCK" == *"]]>"* ]]; then
     CHANGES_BLOCK="${CHANGES_BLOCK//]]>/]] >}"
     echo "Note: a ]]> in ${CHANGELOG_MD_FILE} was broken up before going into the plg."
 fi
 
-# a release that does not match the top changelog entry ships the wrong notes
 CHANGELOG_TOP="$(grep -m1 -oE '^## Version [0-9]{4}\.[0-9]{2}\.[0-9]{2}[a-z]?' "$CHANGELOG_MD_FILE" 2>/dev/null | awk '{print $3}')"
 if [[ "$BRANCH" == "main" && "$CHANGELOG_TOP" != "${BASE_VERSION}${LETTER_SUFFIX}" ]]; then
     echo "CHANGELOG.md top entry is ${CHANGELOG_TOP:-missing}, this build is ${BASE_VERSION}${LETTER_SUFFIX}."
     exit 1
 fi
 
-# Build
 echo "=============================================="
 echo " Files Viewer build"
 echo " Version : ${VERSION}"
@@ -108,22 +88,17 @@ PLUGIN_DEST="${PACKAGE_DIR_TEMP}/usr/local/emhttp/plugins/${PLUGIN_NAME}"
 mkdir -p "${PLUGIN_DEST}"
 cp -R source/* "${PLUGIN_DEST}/"
 
-# Stamp the live build version at the installed location, so anything that wants
-# to show a version reads the running build rather than stale .plg metadata.
 echo "${VERSION}" > "${PLUGIN_DEST}/VERSION"
 
-# Branch metadata (readable by PHP for self-identification)
 cat > "${PLUGIN_DEST}/branch.meta" << METAEOF
 BRANCH="${BRANCH}"
 IS_MAIN_BRANCH=$([[ "$BRANCH" == "main" ]] && echo "1" || echo "0")
 METAEOF
 
-# Permissions
 find "${PLUGIN_DEST}" -type d        -exec chmod 755 {} \;
 find "${PLUGIN_DEST}" -type f        -exec chmod 644 {} \;
 find "${PLUGIN_DEST}" -name "*.sh"   -exec chmod 755 {} \;
 
-# Create .txz
 FILENAME="${PLUGIN_NAME}-${VERSION}"
 PACKAGE_PATH="${PACKAGE_DIR_FINAL}/${FILENAME}.txz"
 
@@ -136,7 +111,6 @@ if [[ ! -f "${PACKAGE_PATH}" ]]; then
 fi
 echo "Package: $(du -h "${PACKAGE_PATH}" | cut -f1)  ->  ${PACKAGE_PATH}"
 
-# MD5
 if command -v md5sum &>/dev/null; then
     PACKAGE_MD5="$(md5sum "${PACKAGE_PATH}" | cut -d' ' -f1)"
 elif command -v md5 &>/dev/null; then
@@ -147,7 +121,6 @@ else
 fi
 echo "MD5: ${PACKAGE_MD5}"
 
-# Base64 helper (portable)
 b64_nolf() {
     if base64 --help 2>/dev/null | grep -q -- "-w"; then
         base64 -w 0 "$1"
@@ -156,7 +129,6 @@ b64_nolf() {
     fi
 }
 
-# Default config (written to flash on first install only)
 read -r -d '' DEFAULT_CFG << 'CFGEOF'
 FV_SHOW_HIDDEN="0"
 FV_FOLDERS_FIRST="1"
@@ -173,9 +145,11 @@ FV_ARCHIVE_MAX="1000"
 FV_AUTOPLAY="0"
 FV_RECYCLE="0"
 FV_RECYCLE_DAYS="30"
+FV_EDIT_DEFAULT="0"
+FV_PALETTE="auto"
+FV_NOTIFY="1"
 CFGEOF
 
-# a settings key missing from here never reaches a fresh install
 CFG_MISSING=""
 for K in $(grep -o "new_cfg\['FV_[A-Z_]*'\]" source/FilesViewerSettings.page | grep -o "FV_[A-Z_]*" | sort -u); do
     grep -q "^${K}=" <<< "$DEFAULT_CFG" || CFG_MISSING="${CFG_MISSING} ${K}"
@@ -185,30 +159,19 @@ if [[ -n "$CFG_MISSING" ]]; then
     exit 1
 fi
 
-# Shared PLG sections
 PLG_DESCRIPTION="A file browser and manager. Previews files and manages daily tasks. Deletes files to a recycle bin per share."
 
-PLG_INSTALL_SCRIPT='# Fix ownership and permissions
-chown -R root:root /usr/local/emhttp/plugins/&name;
+PLG_INSTALL_SCRIPT='chown -R root:root /usr/local/emhttp/plugins/&name;
 find /usr/local/emhttp/plugins/&name; -type d -exec chmod 755 {} \;
 find /usr/local/emhttp/plugins/&name; -type f -exec chmod 644 {} \;
 find /usr/local/emhttp/plugins/&name; -name "*.sh"   -exec chmod 755 {} \;
 
-# filesviewer.cfg lives at /boot/config/plugins/&name;/&name;.cfg and holds user
-# preferences only (no credentials), so 0644 is the correct mode. The edge defence
-# is the CSRF token on the network side and root-only write on /boot/config on the
-# OS side, so world-readable here is acceptable.
 if [[ -f /boot/config/plugins/&name;/&name;.cfg ]]; then
     chmod 644 /boot/config/plugins/&name;/&name;.cfg
 fi
 
-# Reset PHP opcache so the upgraded PHP files are picked up immediately instead of
-# being served from the previous compiled bytecode.
 php -r "if (function_exists(\"opcache_reset\")) opcache_reset();" >/dev/null 2>/dev/null
 
-# Merge existing user config with new defaults. New keys stay at default, existing
-# keys keep their saved values. Done via an external script to keep special
-# characters out of the PLG XML body.
 CFG=/boot/config/plugins/&name;/&name;.cfg
 BAK=/boot/config/plugins/&name;/&name;.cfg.bak
 if [[ -f "$BAK" ]]; then
@@ -216,18 +179,12 @@ if [[ -f "$BAK" ]]; then
     rm -f "$BAK"
 fi
 
-# Daily sweep of expired recycle bin events. dcron reads only the root crontab, so
-# the drop-in has to be merged in by Unraid. /etc is tmpfs, and the plg runs again
-# on every boot, which is what puts the file back.
 cp -f /usr/local/emhttp/plugins/&name;/&name;.cron /etc/cron.d/&name;
 chmod 644 /etc/cron.d/&name;
 if [[ -x /usr/local/sbin/update_cron ]]; then
     /usr/local/sbin/update_cron
 fi
 
-# The bin is for this UI only: a managed block in smb-extra.conf vetoes the
-# folder on every share. Prepended, because the file is included inside [global]
-# and lines after a user [section] would stop being global.
 SMBX=/boot/config/smb-extra.conf
 if ! grep -q "FILESVIEWER RECYCLE BEGIN" "$SMBX" 2>/dev/null; then
     TMPX=$(mktemp)
@@ -239,8 +196,6 @@ if ! grep -q "FILESVIEWER RECYCLE BEGIN" "$SMBX" 2>/dev/null; then
     smbcontrol all reload-config >/dev/null 2>/dev/null
 fi
 
-# Bins made by older builds inherited the share owner; close them to root so
-# SMB and NFS clients cannot enter them even where the veto is overridden.
 for FVB in /mnt/*/*/.RecycleBin ; do
     if [[ -d "$FVB" ]]; then chown root:root "$FVB" ; chmod 700 "$FVB" ; fi
 done
@@ -259,23 +214,18 @@ if [[ -x /usr/local/sbin/update_cron ]]; then
     /usr/local/sbin/update_cron
 fi
 
-# Removing a plugin is one click with no confirmation and it is usually a
-# reinstall, so nothing the user put there is ours to delete. Counted before the
-# veto goes, only to decide whether the closing text mentions the bins at all.
 shopt -s nullglob
 FVBINS=(/mnt/*/*/.RecycleBin)
 shopt -u nullglob
 
-# Drop the managed Samba block and let Samba reread its config.
 sed -i "/FILESVIEWER RECYCLE BEGIN/,/FILESVIEWER RECYCLE END/d" /boot/config/smb-extra.conf 2>/dev/null
 smbcontrol all reload-config >/dev/null 2>/dev/null
 
 removepkg &name;-&version;
 rm -rf /usr/local/emhttp/plugins/&name;
 rm -rf /tmp/&name;
-rm -f /var/log/&name;.log
+rm -f /var/log/&name;.log /var/log/&name;.log.1
 
-# On the boot device only our own files go, the cfg holds the user settings
 rm -f /boot/config/plugins/&name;/&name;-*.txz /boot/config/plugins/&name;/&name;-*.txz.b64 /boot/config/plugins/&name;/&name;.cfg.bak
 rmdir /boot/config/plugins/&name; 2>/dev/null
 
@@ -297,7 +247,6 @@ fi
 echo "----------------------------------------------------"
 echo ""'
 
-# Generate .plg
 echo "Generating ${PLUGIN_NAME}.plg (${BRANCH} target)..."
 
 if [[ "$LOCAL_INSTALL" == "local" ]]; then
@@ -444,10 +393,8 @@ EOF
 
 fi
 
-# Cleanup
 rm -rf "${PACKAGE_DIR_TEMP}"
 
-# Summary
 echo ""
 echo "Build complete!"
 echo "   Package : ${PACKAGE_PATH}  ($(du -h "${PACKAGE_PATH}" | cut -f1))"

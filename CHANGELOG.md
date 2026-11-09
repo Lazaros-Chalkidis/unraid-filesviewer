@@ -1,6 +1,17 @@
 
 # Files Viewer
 
+## Version 2026.11.09
+
+### Added
+- The Delete dialog has a tick box to delete permanently and skip the Recycle Bin, for the times you know you will not want the item back. It is off each time the dialog opens, and it only shows where the Recycle Bin would otherwise take the item
+
+### Fixed
+- Listing a large tar archive took up to 20 seconds, the full time to decompress it, although only the first entries are shown. PHP ignores SIGPIPE and tar inherited that, so it kept going after the listing had stopped reading. tar is now started with the default signal again and stops as soon as the list is full
+
+### Changed
+- The Extract dialog looks inside the archive first and says exactly what will come out: the one folder or file it holds, which comes out as it is, or a new folder for everything inside. The name is in a field you can change before extracting. Before, it quoted the general rule with the archive's name in bold, which was the wrong name when the archive held a single folder (issue #8)
+
 ## Version 2026.11.07
 
 ### Added

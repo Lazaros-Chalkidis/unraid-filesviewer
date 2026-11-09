@@ -88,13 +88,14 @@ grey, there is no point packing a zip into another zip.
 ## Extracting an archive
 
 Open a zip or tar archive and, with editing on, press **Extract** above the
-listing. It unpacks next to the archive. An archive that holds a single file or
-a single folder gives you that file or folder as it is, anything more lands in
-a new folder named after the archive. A name that is already taken gets a
-number, the way a move does. Links inside the archive are left out, and what
-comes out takes the owner and permissions of the folder it lands in, not
-whatever the archive says. 7z and rar are listed as unsupported, because they
-need tools that stock Unraid does not ship.
+listing. It unpacks next to the archive. The dialog says what is inside: an
+archive that holds a single file or a single folder gives you that file or
+folder as it is, anything more lands in a new folder named after the archive.
+Either way the name is in a field you can change before you extract. A name
+that is already taken gets a number, the way a move does. Links inside the
+archive are left out, and what comes out takes the owner and permissions of
+the folder it lands in, not whatever the archive says. 7z and rar are listed
+as unsupported, because they need tools that stock Unraid does not ship.
 
 ## Long jobs
 
@@ -138,7 +139,9 @@ says whether it matches.
 
 Delete removes what you have ticked. If the recycle bin is switched on in the
 settings, deletes made here move to a per-share bin instead of going for good,
-and the Recycle Bin button restores or empties them.
+and the Recycle Bin button restores or empties them. When you know you will
+not want something back, tick "Delete permanently" in the dialog and it skips
+the bin. The tick is off every time the dialog opens.
 
 The bin is off by default, and it only covers deletes made inside Files Viewer.
 Anything deleted over SMB or by another tool is not caught.

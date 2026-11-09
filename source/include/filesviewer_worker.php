@@ -314,12 +314,14 @@ final class FilesViewerWorker
         $archive = (string)($spec['archive'] ?? '');
         $dest    = (string)($spec['dest'] ?? '');
         $name    = (string)($spec['name'] ?? '');
+        $single  = (string)($spec['single'] ?? '');
         $fmt     = (string)($spec['format'] ?? '');
 
         if (FilesViewerEndpoint::safePath($archive, 'file') === null
             || FilesViewerEndpoint::safePath(dirname($dest), 'dir') === null
             || strpos(basename($dest), '.fvextract-') !== 0
             || FilesViewerEndpoint::safeName($name) === null
+            || ($single !== '' && FilesViewerEndpoint::safeName($single) === null)
             || file_exists($dest) || is_link($dest)
             || !in_array($fmt, ['zip', 'tar', 'tgz', 'tbz2', 'txz'], true)) {
             self::patch(['state' => 'error', 'message' => 'bad job spec']);
@@ -354,7 +356,7 @@ final class FilesViewerWorker
             self::notify('error', $msg);
             return;
         }
-        $final = self::settleExtract($dest, $name);
+        $final = self::settleExtract($dest, $name, $single);
         if ($final === null) {
             FilesViewerEndpoint::removeTree($dest);
             self::patch(['state' => 'error', 'message' => 'cannot place what was extracted next to the archive', 'current' => '']);
@@ -553,12 +555,12 @@ final class FilesViewerWorker
         return self::cWrite(str_repeat("\0", 1024), 'tgz');
     }
 
-    private static function settleExtract(string $tmp, string $name): ?string
+    private static function settleExtract(string $tmp, string $name, string $single): ?string
     {
         $parent = dirname($tmp);
         $names  = array_values(array_diff(scandir($tmp) ?: [], ['.', '..']));
         if (count($names) === 1 && !is_link($tmp . '/' . $names[0])) {
-            $final = self::freeSpot($parent, $names[0]);
+            $final = self::freeSpot($parent, $single !== '' ? $single : $names[0]);
             if (!@rename($tmp . '/' . $names[0], $final)) return null;
             @rmdir($tmp);
             return $final;

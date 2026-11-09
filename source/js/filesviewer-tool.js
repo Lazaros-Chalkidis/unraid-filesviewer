@@ -1312,7 +1312,7 @@
             (d.truncated ? ' ' + tf('(showing the first %s)', d.count) : '') +
             ' \u00b7 ' + T('listing only, nothing is extracted') + '</span>' +
             (ex && rows.length ? '<button type="button" class="fv-btn fv-btn--primary" id="fv-arch-extract"' +
-                ' data-folder="' + esc(ex.folder) + '" data-taken="' + (ex.taken ? '1' : '0') + '">' + T('Extract') + '</button>' : '') +
+                ' data-what="' + esc(extractWhat(ex.folder, d.top)) + '">' + T('Extract') + '</button>' : '') +
             '</div>';
 
         if (!rows.length) {
@@ -1335,18 +1335,23 @@
         _bodyEl.innerHTML = head + html;
         refreshExtractBtn();
         var xb = document.getElementById('fv-arch-extract');
-        if (xb) xb.addEventListener('click', function () { promptExtract(path, name, ex.folder); });
+        if (xb) xb.addEventListener('click', function () { promptExtract(path, name, ex.folder, d.top || null); });
+    }
+
+    function extractWhat(folder, top) {
+        if (top && top.count === 1) {
+            return top.is_dir ? tf('It holds one folder, %s, which comes out as it is.', top.name)
+                              : tf('It holds one file, %s, which comes out as it is.', top.name);
+        }
+        if (top) return tf('Everything inside goes into a new folder named %s.', folder);
+        return tf('A single file or folder inside comes out as itself, anything more goes into a folder named %s.', folder);
     }
 
     function refreshExtractBtn() {
         var b = document.getElementById('fv-arch-extract');
         if (!b) return;
-        var folder = b.getAttribute('data-folder') || '';
-        var taken  = b.getAttribute('data-taken') === '1';
         b.disabled = !_editMode;
-        b.title = !_editMode ? T('Switch on editing to extract')
-                : tf('Unpack next to the archive, into a folder named %s unless it holds a single file or folder', folder) +
-                  (taken ? ' ' + T('(the name is taken, so a number is added)') : '');
+        b.title = !_editMode ? T('Switch on editing to extract') : T('Unpack next to the archive.') + ' ' + (b.getAttribute('data-what') || '');
     }
 
     function promptCompress() {
@@ -1373,21 +1378,36 @@
         var inp = ov.querySelector('#fv-cx-name'); inp.focus(); inp.select();
     }
 
-    function promptExtract(path, name, folder) {
+    function promptExtract(path, name, folder, top) {
+        var single = !!(top && top.count === 1), what, label, def;
+        if (single) {
+            what  = top.is_dir ? tf('It holds one folder, %s.', '<b>' + esc(top.name) + '</b>') : tf('It holds one file, %s.', '<b>' + esc(top.name) + '</b>');
+            label = T('It comes out next to the archive, under this name');
+            def   = top.name;
+        } else {
+            what  = top ? T('It holds more than one item.') : '';
+            label = top ? T('They go into a new folder next to the archive, named') : T('A single file or folder inside comes out as itself. Anything more goes into a new folder next to the archive, named');
+            def   = folder;
+        }
         var inner =
-            '<p class="fv-confirm">' + tf('Extract %s next to it?', '<b>' + esc(name) + '</b>') + '</p>' +
+            '<p class="fv-confirm">' + tf('Extract %s?', '<b>' + esc(name) + '</b>') + (what ? ' ' + what : '') + '</p>' +
+            '<label class="fv-field"><span>' + label + '</span>' +
+              '<input type="text" class="fv-input" id="fv-xt-name" autocomplete="off" spellcheck="false" value="' + esc(def) + '"></label>' +
             '<p class="fv-confirm" style="color:var(--fv-text-dim)">' +
-            tf('A single file or folder inside comes out as itself, anything more goes into a folder named %s. A name that is taken gets a number.', '<b>' + esc(folder) + '</b>') + ' ' +
+            T('A name that is taken gets a number.') + ' ' +
             T('Links and special entries in the archive are left out.') + ' ' +
             T('What comes out takes the owner and permissions of this folder, not what the archive says.') + '</p>' +
             '<div class="fv-modal__err" style="display:none"></div>';
-        modalOpen(T('Extract'), inner, T('Extract'), 'fv-btn--primary', function (ov) {
+        var ov = modalOpen(T('Extract'), inner, T('Extract'), 'fv-btn--primary', function (ov) {
+            var val = ov.querySelector('#fv-xt-name').value.trim();
+            if (!val) { modalError(ov, T('Enter a name.')); return; }
             modalBusy(ov, true);
-            postJson('extract', { path: path }).then(function (d) {
+            postJson('extract', single ? { path: path, single: val } : { path: path, name: val }).then(function (d) {
                 if (!d || !d.ok) { modalError(ov, (d && d.error) || T('Could not start.')); modalBusy(ov, false); return; }
                 openProgress('extract', d.job);
             });
         });
+        var inp = ov.querySelector('#fv-xt-name'); inp.focus(); inp.select();
     }
 
     function loadDir(path, fromInit) {
@@ -2226,16 +2246,19 @@
         if (!paths.length) return;
         var noBin = paths[0].split('/').filter(Boolean).length < 4;
         var what  = paths.length === 1 ? '<b>' + esc(baseName(paths[0])) + '</b>' : '<b>' + tf('%s items', paths.length) + '</b>';
+        var binOk = _recycleOn && !noBin;
+        var permQ = tf('Permanently delete %s? This cannot be undone.', what);
         var inner =
-            '<p class="fv-confirm">' + (_recycleOn && !noBin
+            '<p class="fv-confirm" id="fv-del-q">' + (binOk
                 ? tf('Move %s to the Recycle Bin?', what)
-                : tf('Permanently delete %s? This cannot be undone.', what) +
-                  (_recycleOn ? ' ' + T('The recycle bin lives inside each share, and there is none at this level.') : '')) +
+                : permQ + (_recycleOn ? ' ' + T('The recycle bin lives inside each share, and there is none at this level.') : '')) +
             '</p>' +
+            (binOk ? '<label class="fv-check"><input type="checkbox" id="fv-del-perm"> ' + T('Delete permanently, skip the Recycle Bin') + '</label>' : '') +
             '<div class="fv-modal__err" style="display:none"></div>';
-        modalOpen(T('Delete'), inner, T('Delete'), 'fv-btn--danger', function (ov) {
+        var ov = modalOpen(T('Delete'), inner, T('Delete'), 'fv-btn--danger', function (ov) {
+            var perm = ov.querySelector('#fv-del-perm');
             modalBusy(ov, true);
-            postJson('delete', { paths: JSON.stringify(paths) }).then(function (d) {
+            postJson('delete', { paths: JSON.stringify(paths), permanent: (perm && perm.checked) ? 1 : 0 }).then(function (d) {
                 modalClose();
                 clearPreview();
                 refreshAfter(null).then(function () {
@@ -2248,6 +2271,10 @@
                     }
                 });
             });
+        });
+        var cb = ov.querySelector('#fv-del-perm');
+        if (cb) cb.addEventListener('change', function () {
+            ov.querySelector('#fv-del-q').innerHTML = cb.checked ? permQ : tf('Move %s to the Recycle Bin?', what);
         });
     }
 

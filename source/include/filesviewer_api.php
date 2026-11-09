@@ -502,29 +502,25 @@ final class FilesViewerEndpoint
         $entries = [];
         $truncated = false;
 
+        $tops = [];
         if ($fmt === 'zip') {
             $z = new \ZipArchive();
             if ($z->open($real, \ZipArchive::RDONLY) !== true) return ['ok' => false, 'error' => 'not a zip archive, or damaged'];
             $n = $z->numFiles;
-            for ($i = 0; $i < $n && $i < $max; $i++) {
+            for ($i = 0; $i < $n; $i++) {
                 $st = $z->statIndex($i);
                 if ($st === false) continue;
                 $nm = str_replace('\\', '/', (string)$st['name']);
-                $entries[] = ['name' => $nm, 'size' => (int)$st['size'], 'is_dir' => (substr($nm, -1) === '/')];
+                self::noteTop($tops, $nm);
+                if ($i < $max) $entries[] = ['name' => $nm, 'size' => (int)$st['size'], 'is_dir' => (substr($nm, -1) === '/')];
             }
             $truncated = $n > $max;
             $z->close();
         } else {
-            switch ($fmt) {
-                case 'tar':  $cmd = 'tar -tvf ' . $arg;  break;
-                case 'tgz':  $cmd = 'tar -tzvf ' . $arg; break;
-                case 'tbz2': $cmd = 'tar -tjvf ' . $arg; break;
-                case 'txz':  $cmd = 'tar -tJvf ' . $arg; break;
-                default:
-                    return ['ok' => true, 'kind' => 'arch_unsupported', 'category' => 'arch', 'size' => (int)@filesize($real)];
-            }
+            $flag = ['tar' => '', 'tgz' => 'z', 'tbz2' => 'j', 'txz' => 'J'][$fmt] ?? null;
+            if ($flag === null) return ['ok' => true, 'kind' => 'arch_unsupported', 'category' => 'arch', 'size' => (int)@filesize($real)];
             $lines = [];
-            @exec('timeout 20 ' . $cmd . ' 2>/dev/null | head -n ' . ($max + 40), $lines);
+            @exec(self::tarListCmd($flag . 'v', $arg) . ' 2>/dev/null | head -n ' . ($max + 40), $lines);
             foreach ($lines as $ln) {
                 if (preg_match('#^([dl\-][rwxsStT\-]{9})\S*\s+\S+\s+(\d+)\s+(?:\d{4}-\d\d-\d\d|\d\d-\d\d-\d{4})\s+\d\d:\d\d\s+(.+)$#', $ln, $m)) {
                     $nm    = $m[3];
@@ -534,6 +530,11 @@ final class FilesViewerEndpoint
                     $entries[] = ['name' => $nm, 'size' => (int)$m[2], 'is_dir' => $isDir];
                 }
                 if (count($entries) >= $max) { $truncated = true; break; }
+            }
+            if ($truncated) {
+                $tops = self::tarTops(self::tarListCmd($flag, $arg));
+            } else {
+                foreach ($entries as $e) self::noteTop($tops, $e['name']);
             }
         }
 
@@ -545,7 +546,57 @@ final class FilesViewerEndpoint
             'truncated' => $truncated,
             'entries'   => $entries,
             'extract'   => self::archiveExtractName($real),
+            'top'       => self::topSummary($tops),
         ];
+    }
+
+    private static function noteTop(array &$tops, string $name): void
+    {
+        $name = ltrim($name, '/');
+        while (strpos($name, './') === 0) $name = substr($name, 2);
+        if ($name === '' || $name === '.') return;
+        $slash = strpos($name, '/');
+        $top   = $slash === false ? $name : substr($name, 0, $slash);
+        if (!isset($tops[$top])) $tops[$top] = false;
+        if ($slash !== false) $tops[$top] = true;
+    }
+
+    // PHP ignores SIGPIPE and children inherit that, so tar would decompress the whole archive after head or awk stopped reading
+    private static function tarListCmd(string $flags, string $arg): string
+    {
+        static $env = null;
+        if ($env === null) {
+            @exec('env --default-signal=PIPE true 2>/dev/null', $o, $rc);
+            $env = ($rc === 0) ? 'env --default-signal=PIPE ' : '';
+        }
+        return 'timeout 20 ' . $env . 'tar -t' . $flags . 'f ' . $arg;
+    }
+
+    // the full listing stops after the cap, so tar is asked again for names only and read until a second top-level entry shows up
+    private static function tarTops(string $cmd): array
+    {
+        $awk = 'awk \'{ p = $0; sub(/^\/+/, "", p); while (p ~ /^\.\//) sub(/^\.\//, "", p); if (p == "" || p == ".") next;'
+             . ' i = index(p, "/"); t = (i ? substr(p, 1, i - 1) : p);'
+             . ' if (!(t in s)) { s[t] = 1; n++; print "T " t; if (n > 1) exit }'
+             . ' if (i && !(t in d)) { d[t] = 1; print "D " t } }\'';
+        $lines = [];
+        @exec('bash -o pipefail -c ' . escapeshellarg($cmd . ' 2>/dev/null | ' . $awk), $lines, $rc);
+        $tops = [];
+        foreach ($lines as $ln) {
+            if (strpos($ln, 'T ') === 0) $tops[substr($ln, 2)] = $tops[substr($ln, 2)] ?? false;
+            elseif (strpos($ln, 'D ') === 0) $tops[substr($ln, 2)] = true;
+        }
+        // tar dies of SIGPIPE when awk stops at the second top, that answer is still certain; a timeout with one top is not
+        if ($rc !== 0 && count($tops) < 2) return [];
+        return $tops;
+    }
+
+    private static function topSummary(array $tops): ?array
+    {
+        if (!$tops) return null;
+        if (count($tops) > 1) return ['count' => 2];
+        $name = (string)array_key_first($tops);
+        return ['count' => 1, 'name' => $name, 'is_dir' => (bool)$tops[$name]];
     }
 
     public static function archiveKind(string $name): array
@@ -667,6 +718,12 @@ final class FilesViewerEndpoint
         if ($fmt === '') return ['ok' => false, 'error' => 'this archive type cannot be extracted here'];
         if (self::safeName($stem) === null) return ['ok' => false, 'error' => 'bad folder name'];
 
+        $name   = trim((string)($_POST['name'] ?? ''));
+        $single = trim((string)($_POST['single'] ?? ''));
+        if ($name === '') $name = $stem;
+        if (self::safeName($name) === null) return ['ok' => false, 'error' => 'bad folder name'];
+        if ($single !== '' && self::safeName($single) === null) return ['ok' => false, 'error' => 'bad name'];
+
         $parent = dirname($real);
         if (!is_writable($parent)) return ['ok' => false, 'error' => 'the folder is not writable'];
 
@@ -677,10 +734,10 @@ final class FilesViewerEndpoint
 
         $id   = self::jobNewId();
         $dest = $parent . '/.fvextract-' . $id;
-        if (!self::jobSpawn($id, ['op' => 'extract', 'archive' => $real, 'dest' => $dest, 'name' => $stem, 'format' => $fmt])) {
+        if (!self::jobSpawn($id, ['op' => 'extract', 'archive' => $real, 'dest' => $dest, 'name' => $name, 'single' => $single, 'format' => $fmt])) {
             return ['ok' => false, 'error' => 'could not start the job'];
         }
-        self::audit('extract', ['archive' => $real, 'dest' => $parent . '/' . $stem, 'job' => $id]);
+        self::audit('extract', ['archive' => $real, 'dest' => $parent . '/' . ($single !== '' ? $single : $name), 'job' => $id]);
         return ['ok' => true, 'job' => $id];
     }
 
@@ -987,7 +1044,7 @@ final class FilesViewerEndpoint
 
     private static function opDelete(): array
     {
-        $mode = self::config()['recycle'] ? 'trash' : 'permanent';
+        $mode = (self::config()['recycle'] && (string)($_POST['permanent'] ?? '') !== '1') ? 'trash' : 'permanent';
 
         $list = [];
         $raw  = (string)($_POST['paths'] ?? '');

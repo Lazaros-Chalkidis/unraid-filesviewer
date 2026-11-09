@@ -27,7 +27,7 @@ It previews the common types in place: images, text and code with syntax highlig
 - In-place editor: Open text and config files up to 2 MB in the preview pane, change them, and save them back. Line numbers, cursor position, find and replace with Ctrl+F, Ctrl+S to save
 - Upload and download: Send files from your machine to the current folder, cancel midway if you change your mind, and pull any file back out
 - Background jobs: Long copies, moves, deletes, extractions and compressions run in a worker with live progress and a cancel button, so the page never hangs
-- Recycle bin: Deletes made in Files Viewer move to a per-share bin, with restore and purge in a bin view and a daily auto-empty (30 or 60 days, or never)
+- Recycle bin: Deletes made in Files Viewer move to a per-share bin, with restore and purge in a bin view and a daily auto-empty (30 or 60 days, or never). A tick in the Delete dialog skips the bin for that one delete
 - Bin off the network: The bin is reachable from this page alone. Samba vetoes the folder on every share and it is root-only on disk, which covers NFS as well
 - Space analysis: Rank everything inside a folder by the space it actually takes, with drill-in on the results. It reads every file underneath, which on a share with hundreds of thousands of files runs for many minutes, so the button is hidden until you turn it on in the settings
 - Audit log: Every write is appended to /var/log/filesviewer.log with the time, the action, and the paths involved
@@ -38,7 +38,7 @@ It previews the common types in place: images, text and code with syntax highlig
 - PDF preview: View PDFs inline in the browser's own viewer, with byte-range loading
 - Archive contents: List what is inside zip and tar archives (including tar.gz, tar.bz2, tar.xz) without extracting anything
 - Compress: Pack the ticked files and folders into a zip or tar.gz next to them, with progress and cancel. Both are written by the plugin itself, streamed file by file, so a large set gets a bar instead of a frozen page, and zip handles files over 4 GB
-- Extract: Unpack a zip or tar archive next to it, with progress and cancel. A single file or folder inside comes out as itself, anything more goes into a folder named after the archive. Entries are checked one by one, links are left out, and what comes out takes the owner and permissions of the folder rather than whatever the archive says. 7z and rar are not covered, they need tools that stock Unraid does not ship
+- Extract: Unpack a zip or tar archive next to it, with progress and cancel. The dialog says what is inside and proposes the name, which can be changed: a single file or folder comes out as itself, anything more goes into a folder named after the archive. Entries are checked one by one, links are left out, and what comes out takes the owner and permissions of the folder rather than whatever the archive says. 7z and rar are not covered, they need tools that stock Unraid does not ship
 - Database browser: Open SQLite databases (.db, .db3, .sqlite) read-only, pick a table, and page through the rows 100 at a time
 - Document and spreadsheet preview: Render Word documents (.docx) as formatted text, and show spreadsheets (.xlsx, .xls, .ods) as a table with a tab per sheet
 - Table view for CSV: Show CSV and TSV as a table by default, with a toggle back to the raw text
